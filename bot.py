@@ -1,6 +1,7 @@
 import telebot
 from telebot import types
 import os
+from flask import Flask, request
 from libsql_client import create_client
 
 # =========================
@@ -8,6 +9,7 @@ from libsql_client import create_client
 # =========================
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "ТВІЙ_ТОКЕН_БОТА")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-app.onrender.com")
 
 TURSO_URL = os.getenv("TURSO_URL", "libsql://yhbvgt65-yhbvgt65.aws-ap-northeast-1.turso.io")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN", "ТВІЙ_ТОКЕН_TURSO")
@@ -21,6 +23,7 @@ trainer_data = {}
 admin_chats = {}
 
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 
 # =========================
 # 🗄️ ПІДКЛЮЧЕННЯ ДО БД (TURSO)
@@ -650,6 +653,26 @@ def relay_admin_message(message):
         bot.send_message(message.chat.id, f"❌ Не вдалось надіслати повідомлення користувачу")
 
 # =========================
+# 🌐 FLASK WEBHOOK ENDPOINTS
+# =========================
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Telegram webhook handler"""
+    try:
+        json_data = request.get_json()
+        update = telebot.types.Update.de_json(json_data)
+        bot.process_new_updates([update])
+    except Exception as e:
+        print(f"❌ Помилка обробки webhook: {e}")
+    return '', 200
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check для Render"""
+    return 'OK', 200
+
+# =========================
 # 🚀 ЗАПУСК БОТА
 # =========================
 
@@ -657,7 +680,22 @@ if __name__ == "__main__":
     print("🚀 Бот запускається...")
     init_db()
     
+    # Видалити старий webhook
     try:
-        bot.infinity_polling()
-    except KeyboardInterrupt:
-        print("\n👋 Бот зупинено")
+        bot.remove_webhook()
+        print("✅ Старий webhook видалено")
+    except:
+        pass
+    
+    # Встановити новий webhook
+    webhook_url = f"{WEBHOOK_URL}/webhook"
+    try:
+        bot.set_webhook(url=webhook_url)
+        print(f"✅ Webhook встановлено: {webhook_url}")
+    except Exception as e:
+        print(f"⚠️ Помилка встановлення webhook: {e}")
+    
+    # Запустити Flask додаток
+    port = int(os.getenv("PORT", 5000))
+    print(f"🌐 Запуск Flask на порту {port}...")
+    app.run(host='0.0.0.0', port=port, debug=False)
