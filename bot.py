@@ -21,7 +21,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "ТВІЙ_ТОКЕН_БОТА")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "887078537"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 
-# ✅ ИСПРАВЛЕНО: Правильная конфигурация URL
+# ✅ Правильная конфигурация URL
 TURSO_URL = os.getenv("TURSO_URL", "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
 
@@ -48,11 +48,11 @@ class TursoClient:
     """Синхронный клиент для Turso БД через REST API"""
     
     def __init__(self, url: str, auth_token: str):
-        # ✅ ИСПРАВЛЕНО: Конвертация libsql:// в https://
+        # ✅ Конвертация libsql:// в https://
         if url.startswith("libsql://"):
             url = url.replace("libsql://", "https://", 1)
         
-        self.url = url.rstrip("/")  # Убрать слеш в конце если есть
+        self.url = url.rstrip("/")
         self.auth_token = auth_token
         self.headers = {
             "Authorization": f"Bearer {auth_token}",
@@ -62,7 +62,7 @@ class TursoClient:
     def execute(self, query: str, params: list = None):
         """Выполнить SQL запрос"""
         try:
-            # ✅ ИСПРАВЛЕНО: Правильная структура для Turso API v2
+            # ✅ Правильная структура для Turso API v2
             payload = {
                 "requests": [
                     {
@@ -75,10 +75,8 @@ class TursoClient:
                 ]
             }
             
-            # ✅ ИСПРАВЛЕНО: Правильный URL для запроса
             url = f"{self.url}/v2/pipeline"
             logger.debug(f"📡 Отправка запроса на: {url}")
-            logger.debug(f"📤 Payload: {payload}")
             
             response = requests.post(
                 url,
@@ -87,9 +85,6 @@ class TursoClient:
                 timeout=10
             )
             
-            logger.debug(f"📥 Response status: {response.status_code}")
-            logger.debug(f"📥 Response body: {response.text}")
-            
             if response.status_code != 200:
                 error_msg = f"DB Error (status {response.status_code}): {response.text}"
                 logger.error(f"❌ {error_msg}")
@@ -97,17 +92,14 @@ class TursoClient:
             
             result = response.json()
             
-            # ✅ ИСПРАВЛЕНО: Правильная обработка результатов для v2 API
+            # ✅ Правильная обработка результатов для v2 API
             if result.get("results"):
                 result_data = result["results"][0]
                 
-                # Проверяем поле "response"
                 if result_data.get("response"):
                     response_data = result_data["response"]
                     if response_data.get("rows"):
                         return QueryResult(response_data["rows"])
-                    elif response_data.get("result"):
-                        return QueryResult([])
                     return QueryResult([])
                 
                 return QueryResult([])
@@ -131,14 +123,12 @@ def init_client():
     try:
         logger.info(f"🔗 Спроба підключення до Turso: {TURSO_URL}")
         
-        # Перевірка наявності необхідних параметрів
         if not TURSO_URL or not TURSO_TOKEN:
             logger.error("❌ TURSO_URL або TURSO_TOKEN не встановлені!")
             return False
         
         client = TursoClient(url=TURSO_URL, auth_token=TURSO_TOKEN)
         
-        # Тестове підключення
         try:
             result = client.execute("SELECT 1")
             logger.info("✅ Підключення до Turso успішне")
@@ -167,10 +157,9 @@ def get_db_client(retry_count=0):
                 else:
                     return get_db_client(retry_count + 1)
             else:
-                logger.error(f"❌ Не вда��ось підключитися після {MAX_DB_RETRIES} спроб")
+                logger.error(f"❌ Не вдалось підключитися після {MAX_DB_RETRIES} спроб")
                 return None
         
-        # Тест живого з'єднання
         try:
             client.execute("SELECT 1")
             return client
@@ -209,12 +198,10 @@ def init_db():
         
         logger.info("📋 Створення таблиці trainers...")
         
-        # Спочатку перевіримо чи таблиця існує
         try:
             db.execute("SELECT COUNT(*) FROM trainers")
             logger.info("✅ Таблиця trainers вже існує")
         except:
-            # Таблиця не існує, створюємо
             db.execute("""
                 CREATE TABLE trainers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,7 +295,10 @@ def get_trainer_username(message):
             bot.send_message(message.chat.id, "❌ Username має починатися з @\nПопробуй ще раз:")
             return
         
-        trainer_data[message.chat.id] = {"username": username}
+        # ✅ Убираем @ из username для сохранения в БД
+        clean_username = username[1:]
+        
+        trainer_data[message.chat.id] = {"username": clean_username, "display_username": username}
         user_states[message.chat.id] = "waiting_trainer_name"
         bot.send_message(message.chat.id, "Введи ім'я тренера:")
     except Exception as e:
@@ -337,12 +327,13 @@ def get_trainer_description(message):
             return
         
         try:
+            # ✅ Используем чистый username без @
             db.execute(
                 "INSERT INTO trainers (username, name, description) VALUES (?, ?, ?)",
                 [data["username"], data["name"], data["description"]]
             )
             
-            logger.info(f"✅ Тренер додан: {data['name']} ({data['username']})")
+            logger.info(f"✅ Тренер додан: {data['name']} ({data['display_username']})")
             bot.send_message(
                 message.chat.id,
                 f"✅ Тренер {data['name']} успішно додан!"
@@ -353,7 +344,7 @@ def get_trainer_description(message):
             if "unique" in error_str or "constraint" in error_str:
                 bot.send_message(
                     message.chat.id,
-                    f"❌ Тренер з username {data['username']} уже існує"
+                    f"❌ Тренер з username {data['display_username']} уже існує"
                 )
             else:
                 logger.error(f"❌ Помилка БД: {db_error}")
@@ -465,7 +456,8 @@ def list_trainers(message):
             name = trainer[1]
             username = trainer[2]
             desc = trainer[3] or "Немає опису"
-            text += f"{idx}. **{name}** ({username})\n"
+            # ✅ Добавляем @ при отображении
+            text += f"{idx}. **{name}** (@{username})\n"
             text += f"   _{desc}_\n\n"
         
         bot.send_message(message.chat.id, text, parse_mode="Markdown")
@@ -609,6 +601,8 @@ def send_request_to_trainer(call):
             return
         
         username, trainer_name = trainer
+        # ✅ Добавляем @ при отправке сообщения
+        username_with_at = f"@{username}"
         data = user_form.get(call.message.chat.id)
         
         if not data:
@@ -616,25 +610,23 @@ def send_request_to_trainer(call):
             return
         
         # Надіслання повідомлення тренеру
-        notification_text = f"""
-🎯 **Нова заявка на заняття!**
+        notification_text = f"""🎯 **Нова заявка на заняття!**
 
 👤 **Ім'я:** {data['name']}
 📱 **Телефон:** {data['phone']}
 ♟️ **Рівень:** {data['level']}
 
-Тренер, зв'яжись з учнем!
-        """
+Тренер, зв'яжись з учнем!"""
         
         try:
-            bot.send_message(username, notification_text, parse_mode="Markdown")
+            bot.send_message(username_with_at, notification_text, parse_mode="Markdown")
             logger.info(f"✅ Заявка надіслана тренеру {trainer_name}")
             bot.answer_callback_query(call.id, "✅ Заявка надіслана тренеру!", show_alert=False)
         except Exception as send_error:
             logger.warning(f"⚠️ Не вдалось надіслати заявку: {send_error}")
             bot.send_message(
                 call.message.chat.id,
-                f"⚠️ Не вдалось надіслати заявку тренеру. Перевір контакти адміністратора."
+                "⚠️ Не вдалось надіслати заявку тренеру. Перевір контакти адміністратора."
             )
         
         # Підтвердження користувачу
@@ -805,7 +797,6 @@ def end_chat(message):
             
             admin_chats.pop(message.chat.id, None)
         elif message.from_user.id == ADMIN_ID:
-            # Адміністратор завершує чат
             user_id = None
             for uid, aid in admin_chats.items():
                 if aid == message.from_user.id:
@@ -866,7 +857,7 @@ def relay_admin_message(message):
                 break
         
         if not user_id:
-            bot.send_message(message.chat.id, "❌ Немає активного чату")
+            bot.send_message(message.chat.id, "❌ Немає акт��вного чату")
             return
         
         try:
@@ -875,7 +866,7 @@ def relay_admin_message(message):
                 f"💬 Адміністратор:\n\n{message.text}"
             )
         except:
-            bot.send_message(message.chat.id, f"❌ Не вдалось надіслати повідомлення користувачу")
+            bot.send_message(message.chat.id, "❌ Не вдалось надіслати повідомлення користувачу")
     except Exception as e:
         logger.error(f"❌ Помилка у relay_admin_message: {e}")
 
