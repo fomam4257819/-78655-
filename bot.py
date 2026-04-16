@@ -23,7 +23,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 
 # ✅ ИСПРАВЛЕНО: Правильная конфигурация URL
 TURSO_URL = os.getenv("TURSO_URL", "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJ[...]
 
 # Максимальное количество попыток переподключения
 MAX_DB_RETRIES = 3
@@ -62,11 +62,15 @@ class TursoClient:
     def execute(self, query: str, params: list = None):
         """Выполнить SQL запрос"""
         try:
+            # ✅ ИСПРАВЛЕНО: Правильная структура для Turso API v2
             payload = {
-                "statements": [
+                "requests": [
                     {
-                        "sql": query,
-                        "args": params or []
+                        "type": "execute",
+                        "stmt": {
+                            "sql": query,
+                            "args": params or []
+                        }
                     }
                 ]
             }
@@ -74,6 +78,7 @@ class TursoClient:
             # ✅ ИСПРАВЛЕНО: Правильный URL для запроса
             url = f"{self.url}/v2/pipeline"
             logger.debug(f"📡 Отправка запроса на: {url}")
+            logger.debug(f"📤 Payload: {payload}")
             
             response = requests.post(
                 url,
@@ -82,6 +87,9 @@ class TursoClient:
                 timeout=10
             )
             
+            logger.debug(f"📥 Response status: {response.status_code}")
+            logger.debug(f"📥 Response body: {response.text}")
+            
             if response.status_code != 200:
                 error_msg = f"DB Error (status {response.status_code}): {response.text}"
                 logger.error(f"❌ {error_msg}")
@@ -89,11 +97,19 @@ class TursoClient:
             
             result = response.json()
             
-            # Обработка результатов
+            # ✅ ИСПРАВЛЕНО: Правильная обработка результатов для v2 API
             if result.get("results"):
                 result_data = result["results"][0]
-                if result_data.get("rows"):
-                    return QueryResult(result_data["rows"])
+                
+                # Проверяем поле "response"
+                if result_data.get("response"):
+                    response_data = result_data["response"]
+                    if response_data.get("rows"):
+                        return QueryResult(response_data["rows"])
+                    elif response_data.get("result"):
+                        return QueryResult([])
+                    return QueryResult([])
+                
                 return QueryResult([])
             
             return QueryResult([])
@@ -151,10 +167,10 @@ def get_db_client(retry_count=0):
                 else:
                     return get_db_client(retry_count + 1)
             else:
-                logger.error(f"❌ Не вдалось підключитися після {MAX_DB_RETRIES} спроб")
+                logger.error(f"❌ Не вда��ось підключитися після {MAX_DB_RETRIES} спроб")
                 return None
         
-        # Тест ж��вого з'єднання
+        # Тест живого з'єднання
         try:
             client.execute("SELECT 1")
             return client
@@ -817,7 +833,7 @@ def end_chat(message):
 
 @bot.message_handler(func=lambda message: message.chat.id in admin_chats and user_states.get(message.chat.id) == "in_admin_chat")
 def relay_user_message(message):
-    """Пересилання п��відомлення від користувача до адміна"""
+    """Пересилання повідомлення від користувача до адміна"""
     try:
         if message.text == "🛑 Завершити чат":
             end_chat(message)
