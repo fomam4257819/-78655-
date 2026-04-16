@@ -20,7 +20,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "887078537"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 
 TURSO_URL = os.getenv("TURSO_URL", "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
 
 MAX_DB_RETRIES = 3
 DB_RETRY_DELAY = 2
@@ -92,6 +92,7 @@ class TursoClient:
                 if result_data.get("response"):
                     response_data = result_data["response"]
                     if response_data.get("rows"):
+                        # ✅ ИСПРАВЛЕНИЕ: Правильная парсинг структуры Turso
                         return QueryResult(response_data["rows"])
                 
                 return QueryResult([])
@@ -104,7 +105,26 @@ class TursoClient:
 class QueryResult:
     """Результат запроса к БД"""
     def __init__(self, rows):
-        self.rows = rows if rows else []
+        self.rows = []
+        
+        if not rows:
+            return
+        
+        # ✅ ИСПРАВЛЕНИЕ: Парсим структуру Turso
+        # Turso возвращает: [{"values": [1, "ivan", ...]}, ...]
+        if isinstance(rows, list) and len(rows) > 0:
+            if isinstance(rows[0], dict) and "values" in rows[0]:
+                # Структура Turso - извлекаем values
+                self.rows = [tuple(row["values"]) for row in rows]
+                logger.debug(f"📦 Парсинг Turso: {len(self.rows)} строк")
+            elif isinstance(rows[0], (list, tuple)):
+                # Уже готовый список кортежей
+                self.rows = [tuple(row) if not isinstance(row, tuple) else row for row in rows]
+                logger.debug(f"📦 Готовый формат: {len(self.rows)} строк")
+            else:
+                # Неизвестный формат, оставляем как есть
+                self.rows = rows
+                logger.warning(f"⚠️ Неизвестный формат: {type(rows[0])}")
 
 client = None
 db_initialized = False
