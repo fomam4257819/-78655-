@@ -23,7 +23,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 
 # ✅ Правильная конфигурация URL
 TURSO_URL = os.getenv("TURSO_URL", "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJ[...]
 
 # Максимальное количество попыток переподключения
 MAX_DB_RETRIES = 3
@@ -63,13 +63,16 @@ class TursoClient:
         """Выполнить SQL запрос"""
         try:
             # ✅ Правильная структура для Turso API v2
+            # ✅ ИСПРАВЛЕНО: конвертируем все параметры в строки
+            str_params = [str(p) if p is not None else None for p in (params or [])]
+            
             payload = {
                 "requests": [
                     {
                         "type": "execute",
                         "stmt": {
                             "sql": query,
-                            "args": params or []
+                            "args": str_params
                         }
                     }
                 ]
@@ -201,11 +204,11 @@ def init_db():
             db.execute("SELECT COUNT(*) FROM trainers")
             logger.info("✅ Таблиця trainers вже існує")
         except:
-            # ✅ ИЗМЕЕНО: user_id вместо username
+            # ✅ ИЗМEЕНО: user_id как TEXT вместо INTEGER
             db.execute("""
                 CREATE TABLE trainers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER UNIQUE NOT NULL,
+                    user_id TEXT UNIQUE NOT NULL,
                     name TEXT NOT NULL,
                     description TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -278,7 +281,6 @@ def add_trainer_start(message):
             return
         
         user_states[message.chat.id] = "waiting_trainer_user_id"
-        # ✅ IZMENO: просим user_id вместо @username
         bot.send_message(
             message.chat.id,
             "Введи Telegram ID тренера (числовой ID):\n(Приклад: 123456789)"
@@ -290,14 +292,14 @@ def add_trainer_start(message):
 def get_trainer_user_id(message):
     """Отримання user_id тренера"""
     try:
-        # ✅ IZMENO: проверяем что это число
         try:
             user_id = int(message.text.strip())
         except ValueError:
             bot.send_message(message.chat.id, "❌ ID має бути числом\nПопробуй ще раз:")
             return
         
-        trainer_data[message.chat.id] = {"user_id": user_id}
+        # ✅ ИСПРАВЛЕНО: сохраняем как строку
+        trainer_data[message.chat.id] = {"user_id": str(user_id)}
         user_states[message.chat.id] = "waiting_trainer_name"
         bot.send_message(message.chat.id, "Введи ім'я тренера:")
     except Exception as e:
@@ -326,7 +328,7 @@ def get_trainer_description(message):
             return
         
         try:
-            # ✅ IZMENO: сохраняем user_id вместо username
+            # ✅ user_id уже строка
             db.execute(
                 "INSERT INTO trainers (user_id, name, description) VALUES (?, ?, ?)",
                 [data["user_id"], data["name"], data["description"]]
@@ -369,7 +371,6 @@ def delete_trainer_start(message):
             bot.send_message(message.chat.id, "❌ Помилка підключення до БД")
             return
         
-        # ✅ IZMENO: берем user_id вместо username
         result = db.execute("SELECT id, name, user_id FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
@@ -409,6 +410,7 @@ def delete_trainer_confirm(call):
             bot.answer_callback_query(call.id, "❌ Помилка підключення", show_alert=True)
             return
         
+        # ✅ Конвертируем trainer_id в строку
         result = db.execute("SELECT name FROM trainers WHERE id = ?", [trainer_id])
         trainer = result.rows[0] if (hasattr(result, 'rows') and result.rows) else None
         
@@ -444,7 +446,6 @@ def list_trainers(message):
             bot.send_message(message.chat.id, "❌ Помилка підключення до БД")
             return
         
-        # ✅ IZMENO: берем user_id вместо username
         result = db.execute("SELECT id, name, user_id, description FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
@@ -545,7 +546,6 @@ def get_level(message):
             cancel_selection(message)
             return
         
-        # ✅ IZMENO: берем user_id вместо username
         result = db.execute("SELECT id, name, description, user_id FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
@@ -591,7 +591,7 @@ def send_request_to_trainer(call):
             bot.answer_callback_query(call.id, "❌ Помилка підключення", show_alert=True)
             return
         
-        # ✅ IZMENO: берем user_id вместо username
+        # ✅ Конвертируем trainer_id в строку
         result = db.execute(
             "SELECT user_id, name FROM trainers WHERE id = ?",
             [trainer_id]
@@ -603,13 +603,20 @@ def send_request_to_trainer(call):
             return
         
         trainer_user_id, trainer_name = trainer
+        # ✅ Конвертируем user_id в число для отправки сообщения
+        try:
+            trainer_user_id = int(trainer_user_id)
+        except (ValueError, TypeError):
+            logger.error(f"❌ Невалидный user_id: {trainer_user_id}")
+            bot.answer_callback_query(call.id, "❌ Помилка ID тренера", show_alert=True)
+            return
+        
         data = user_form.get(call.message.chat.id)
         
         if not data:
             bot.answer_callback_query(call.id, "❌ Помилка даних", show_alert=True)
             return
         
-        # ✅ IZMENO: отправляем по user_id
         notification_text = f"""🎯 **Нова заявка на заняття!**
 
 👤 **Ім'я:** {data['name']}
