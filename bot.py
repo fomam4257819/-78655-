@@ -21,7 +21,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "887078537"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 
 TURSO_URL = os.getenv("TURSO_URL", "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
 
 MAX_DB_RETRIES = 3
 DB_RETRY_DELAY = 2
@@ -40,6 +40,26 @@ app = Flask(__name__)
 # =========================
 # 🗄️ ПІДКЛЮЧЕННЯ ДО БД (TURSO)
 # =========================
+
+def _unpack_turso_value(v):
+    """Розпакувати значення Turso: {"type": "integer", "value": "5"} → 5"""
+    if isinstance(v, dict):
+        t = v.get("type", "")
+        val = v.get("value")
+        if val is None or t == "null":
+            return None
+        if t == "integer":
+            try:
+                return int(val)
+            except:
+                return val
+        if t == "float":
+            try:
+                return float(val)
+            except:
+                return val
+        return val  # text, blob — повертаємо як є
+    return v  # вже просте значення
 
 class QueryResult:
     """Результат запроса к БД"""
@@ -60,9 +80,12 @@ class QueryResult:
             
             if isinstance(first_row, dict):
                 if "values" in first_row:
-                    # Структура Turso - извлекаем values
+                    # Структура Turso — кожна клітинка може бути {"type":..., "value":...}
                     try:
-                        self.rows = [tuple(row.get("values", [])) for row in rows]
+                        self.rows = [
+                            tuple(_unpack_turso_value(v) for v in row.get("values", []))
+                            for row in rows
+                        ]
                         logger.info(f"📦 Turso format parsed: {len(self.rows)} rows")
                         logger.debug(f"Rows: {self.rows}")
                     except Exception as e:
@@ -71,7 +94,7 @@ class QueryResult:
                 else:
                     logger.warning(f"⚠️ Dict but no 'values' key: {list(first_row.keys())}")
                     try:
-                        self.rows = [tuple(first_row.values()) for row in rows]
+                        self.rows = [tuple(row.values()) for row in rows]
                     except:
                         self.rows = rows
             elif isinstance(first_row, (list, tuple)):
@@ -101,16 +124,23 @@ class TursoClient:
             "Content-Type": "application/json"
         }
     
-    def execute(self, query: str):
-        """Выполнить SQL запрос"""
+    def execute(self, query: str, args: list = None):
+        """Виконати SQL запит. args — список значень для підстановки замість ?"""
         try:
+            stmt = {"sql": query}
+            if args:
+                stmt["args"] = [
+                    {"type": "text", "value": str(a)} if not isinstance(a, (int, float)) or a is None
+                    else {"type": "integer", "value": a} if isinstance(a, int)
+                    else {"type": "float", "value": a}
+                    for a in args
+                ]
+            
             payload = {
                 "requests": [
                     {
                         "type": "execute",
-                        "stmt": {
-                            "sql": query
-                        }
+                        "stmt": stmt
                     }
                 ]
             }
@@ -397,15 +427,11 @@ def get_trainer_description(message):
             return
         
         try:
-            username_escaped = escape_sql(data["username"])
-            name_escaped = escape_sql(data["name"])
-            desc_escaped = escape_sql(data["description"])
-            
-            query = f"""INSERT INTO trainers (username, name, description) 
-            VALUES ('{username_escaped}', '{name_escaped}', '{desc_escaped}')"""
+            query = "INSERT INTO trainers (username, name, description) VALUES (?, ?, ?)"
+            args = [data["username"], data["name"], data["description"]]
             
             logger.info(f"📤 Adding trainer: {data['name']}")
-            db.execute(query)
+            db.execute(query, args)
             
             logger.info(f"✅ Trainer added: {data['name']} ({data['display_username']})")
             bot.send_message(message.chat.id, f"✅ Trainer {data['name']} added!")
