@@ -23,7 +23,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 
 # ✅ Правильная конфигурация URL
 TURSO_URL = os.getenv("TURSO_URL", "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJ[...]
 
 # Максимальное количество попыток переподключения
 MAX_DB_RETRIES = 3
@@ -76,7 +76,6 @@ class TursoClient:
             }
             
             url = f"{self.url}/v2/pipeline"
-            logger.debug(f"📡 Отправка запроса на: {url}")
             
             response = requests.post(
                 url,
@@ -202,10 +201,11 @@ def init_db():
             db.execute("SELECT COUNT(*) FROM trainers")
             logger.info("✅ Таблиця trainers вже існує")
         except:
+            # ✅ ИЗМЕЕНО: user_id вместо username
             db.execute("""
                 CREATE TABLE trainers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
+                    user_id INTEGER UNIQUE NOT NULL,
                     name TEXT NOT NULL,
                     description TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -277,32 +277,31 @@ def add_trainer_start(message):
         if message.from_user.id != ADMIN_ID:
             return
         
-        user_states[message.chat.id] = "waiting_trainer_username"
+        user_states[message.chat.id] = "waiting_trainer_user_id"
+        # ✅ IZMENO: просим user_id вместо @username
         bot.send_message(
             message.chat.id,
-            "Введи @username тренера (з собачкою):\n(Приклад: @chess_coach_ivan)"
+            "Введи Telegram ID тренера (числовой ID):\n(Приклад: 123456789)"
         )
     except Exception as e:
         logger.error(f"❌ Помилка у add_trainer_start: {e}")
 
-@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_trainer_username")
-def get_trainer_username(message):
-    """Отримання username тренера"""
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_trainer_user_id")
+def get_trainer_user_id(message):
+    """Отримання user_id тренера"""
     try:
-        username = message.text.strip()
-        
-        if not username.startswith("@"):
-            bot.send_message(message.chat.id, "❌ Username має починатися з @\nПопробуй ще раз:")
+        # ✅ IZMENO: проверяем что это число
+        try:
+            user_id = int(message.text.strip())
+        except ValueError:
+            bot.send_message(message.chat.id, "❌ ID має бути числом\nПопробуй ще раз:")
             return
         
-        # ✅ Убираем @ из username для сохранения в БД
-        clean_username = username[1:]
-        
-        trainer_data[message.chat.id] = {"username": clean_username, "display_username": username}
+        trainer_data[message.chat.id] = {"user_id": user_id}
         user_states[message.chat.id] = "waiting_trainer_name"
         bot.send_message(message.chat.id, "Введи ім'я тренера:")
     except Exception as e:
-        logger.error(f"❌ Помилка у get_trainer_username: {e}")
+        logger.error(f"❌ Помилка у get_trainer_user_id: {e}")
 
 @bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_trainer_name")
 def get_trainer_name(message):
@@ -327,13 +326,13 @@ def get_trainer_description(message):
             return
         
         try:
-            # ✅ Используем чистый username без @
+            # ✅ IZMENO: сохраняем user_id вместо username
             db.execute(
-                "INSERT INTO trainers (username, name, description) VALUES (?, ?, ?)",
-                [data["username"], data["name"], data["description"]]
+                "INSERT INTO trainers (user_id, name, description) VALUES (?, ?, ?)",
+                [data["user_id"], data["name"], data["description"]]
             )
             
-            logger.info(f"✅ Тренер додан: {data['name']} ({data['display_username']})")
+            logger.info(f"✅ Тренер додан: {data['name']} (ID: {data['user_id']})")
             bot.send_message(
                 message.chat.id,
                 f"✅ Тренер {data['name']} успішно додан!"
@@ -344,7 +343,7 @@ def get_trainer_description(message):
             if "unique" in error_str or "constraint" in error_str:
                 bot.send_message(
                     message.chat.id,
-                    f"❌ Тренер з username {data['display_username']} уже існує"
+                    f"❌ Тренер з ID {data['user_id']} уже існує"
                 )
             else:
                 logger.error(f"❌ Помилка БД: {db_error}")
@@ -370,7 +369,8 @@ def delete_trainer_start(message):
             bot.send_message(message.chat.id, "❌ Помилка підключення до БД")
             return
         
-        result = db.execute("SELECT id, name FROM trainers ORDER BY name")
+        # ✅ IZMENO: берем user_id вместо username
+        result = db.execute("SELECT id, name, user_id FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
         if not trainers:
@@ -444,7 +444,8 @@ def list_trainers(message):
             bot.send_message(message.chat.id, "❌ Помилка підключення до БД")
             return
         
-        result = db.execute("SELECT id, name, username, description FROM trainers ORDER BY name")
+        # ✅ IZMENO: берем user_id вместо username
+        result = db.execute("SELECT id, name, user_id, description FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
         if not trainers:
@@ -454,10 +455,9 @@ def list_trainers(message):
         text = "📋 **Список тренерів:**\n\n"
         for idx, trainer in enumerate(trainers, 1):
             name = trainer[1]
-            username = trainer[2]
+            user_id = trainer[2]
             desc = trainer[3] or "Немає опису"
-            # ✅ Добавляем @ при отображении
-            text += f"{idx}. **{name}** (@{username})\n"
+            text += f"{idx}. **{name}** (ID: {user_id})\n"
             text += f"   _{desc}_\n\n"
         
         bot.send_message(message.chat.id, text, parse_mode="Markdown")
@@ -545,7 +545,8 @@ def get_level(message):
             cancel_selection(message)
             return
         
-        result = db.execute("SELECT id, name, description FROM trainers ORDER BY name")
+        # ✅ IZMENO: берем user_id вместо username
+        result = db.execute("SELECT id, name, description, user_id FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
         if not trainers:
@@ -590,8 +591,9 @@ def send_request_to_trainer(call):
             bot.answer_callback_query(call.id, "❌ Помилка підключення", show_alert=True)
             return
         
+        # ✅ IZMENO: берем user_id вместо username
         result = db.execute(
-            "SELECT username, name FROM trainers WHERE id = ?",
+            "SELECT user_id, name FROM trainers WHERE id = ?",
             [trainer_id]
         )
         trainer = result.rows[0] if (hasattr(result, 'rows') and result.rows) else None
@@ -600,16 +602,14 @@ def send_request_to_trainer(call):
             bot.answer_callback_query(call.id, "❌ Тренер не знайдений", show_alert=True)
             return
         
-        username, trainer_name = trainer
-        # ✅ Добавляем @ при отправке сообщения
-        username_with_at = f"@{username}"
+        trainer_user_id, trainer_name = trainer
         data = user_form.get(call.message.chat.id)
         
         if not data:
             bot.answer_callback_query(call.id, "❌ Помилка даних", show_alert=True)
             return
         
-        # Надіслання повідомлення тренеру
+        # ✅ IZMENO: отправляем по user_id
         notification_text = f"""🎯 **Нова заявка на заняття!**
 
 👤 **Ім'я:** {data['name']}
@@ -619,7 +619,7 @@ def send_request_to_trainer(call):
 Тренер, зв'яжись з учнем!"""
         
         try:
-            bot.send_message(username_with_at, notification_text, parse_mode="Markdown")
+            bot.send_message(trainer_user_id, notification_text, parse_mode="Markdown")
             logger.info(f"✅ Заявка надіслана тренеру {trainer_name}")
             bot.answer_callback_query(call.id, "✅ Заявка надіслана тренеру!", show_alert=False)
         except Exception as send_error:
@@ -857,7 +857,7 @@ def relay_admin_message(message):
                 break
         
         if not user_id:
-            bot.send_message(message.chat.id, "❌ Немає акт��вного чату")
+            bot.send_message(message.chat.id, "❌ Немає активного чату")
             return
         
         try:
