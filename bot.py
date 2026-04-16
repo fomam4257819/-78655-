@@ -2,11 +2,12 @@ import telebot
 from telebot import types
 import os
 import logging
-import json
 from flask import Flask, request
 import time
 from functools import wraps
 import requests
+import sqlite3
+from io import BytesIO
 
 # =========================
 # 📝 ЛОГИРОВАНИЕ
@@ -15,19 +16,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # =========================
-# 🔐 НАЛАШТУВАННЯ
+# 🔐 НАЛАШТ��ВАННЯ
 # =========================
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "ТВІЙ_ТОКЕН_БОТА")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "887078537"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 
-# ✅ Правильная конфигурация URL
 TURSO_URL = os.getenv("TURSO_URL", "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...")
 
 # Максимальное количество попыток переподключения
 MAX_DB_RETRIES = 3
-DB_RETRY_DELAY = 2  # секунды
+DB_RETRY_DELAY = 2
 
 # =========================
 # 📊 СТАНИ КОРИСТУВАЧІВ
@@ -45,10 +45,9 @@ app = Flask(__name__)
 # =========================
 
 class TursoClient:
-    """Синхронный клиент для Turso БД через REST API"""
+    """Клиент для Turso БД"""
     
     def __init__(self, url: str, auth_token: str):
-        # ✅ Конвертация libsql:// в https://
         if url.startswith("libsql://"):
             url = url.replace("libsql://", "https://", 1)
         
@@ -59,20 +58,15 @@ class TursoClient:
             "Content-Type": "application/json"
         }
     
-    def execute(self, query: str, params: list = None):
-        """Выполнить SQL запрос"""
+    def execute(self, query: str):
+        """Выполнить SQL запрос БЕЗ параметров"""
         try:
-            # ✅ Правильная структура для Turso API v2
-            # ✅ ИСПРАВЛЕНО: конвертируем все параметры в строки
-            str_params = [str(p) if p is not None else None for p in (params or [])]
-            
             payload = {
                 "requests": [
                     {
                         "type": "execute",
                         "stmt": {
-                            "sql": query,
-                            "args": str_params
+                            "sql": query
                         }
                     }
                 ]
@@ -94,21 +88,17 @@ class TursoClient:
             
             result = response.json()
             
-            # ✅ Правильная обработка результатов для v2 API
             if result.get("results"):
                 result_data = result["results"][0]
-                
                 if result_data.get("response"):
                     response_data = result_data["response"]
                     if response_data.get("rows"):
                         return QueryResult(response_data["rows"])
-                    return QueryResult([])
-                
                 return QueryResult([])
             
             return QueryResult([])
         except Exception as e:
-            logger.error(f"❌ Ошибка выполнения запроса: {e}")
+            logger.error(f"❌ Ошибка запроса: {e}")
             raise
 
 class QueryResult:
@@ -120,7 +110,7 @@ client = None
 db_initialized = False
 
 def init_client():
-    """Ініціалізація клієнта Turso з обробкою помилок"""
+    """Ініціалізація клієнта Turso"""
     global client
     try:
         logger.info(f"🔗 Спроба підключення до Turso: {TURSO_URL}")
@@ -174,21 +164,6 @@ def get_db_client(retry_count=0):
         logger.error(f"❌ Помилка отримання DB клієнта: {e}")
         return None
 
-def db_operation(func):
-    """Декоратор для надійних операцій з БД"""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            db = get_db_client()
-            if db is None:
-                logger.error(f"❌ Помилка підключення до БД у {func.__name__}")
-                return None
-            return func(db, *args, **kwargs)
-        except Exception as e:
-            logger.error(f"❌ Помилка виконання {func.__name__}: {e}")
-            return None
-    return wrapper
-
 def init_db():
     """Ініціалізація таблиць БД"""
     global db_initialized
@@ -204,7 +179,6 @@ def init_db():
             db.execute("SELECT COUNT(*) FROM trainers")
             logger.info("✅ Таблиця trainers вже існує")
         except:
-            # ✅ ИЗМEЕНО: user_id как TEXT вместо INTEGER
             db.execute("""
                 CREATE TABLE trainers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,7 +218,7 @@ def start(message):
         user_states[message.chat.id] = "main_menu"
     except Exception as e:
         logger.error(f"❌ Помилка у start: {e}")
-        bot.send_message(message.chat.id, "❌ Помилка при запуску. Спробуйте ще раз.")
+        bot.send_message(message.chat.id, "❌ Помилка при запуску.")
 
 # =========================
 # 👨‍💼 АДМІН-ПАНЕЛЬ
@@ -252,7 +226,7 @@ def start(message):
 
 @bot.message_handler(func=lambda message: message.text == "Edit")
 def admin_panel(message):
-    """Доступ до адмін-панелі (тільки для адміністратора)"""
+    """Доступ до адмін-панелі"""
     try:
         if message.from_user.id != ADMIN_ID:
             bot.send_message(message.chat.id, "❌ Немає доступу")
@@ -275,7 +249,7 @@ def admin_panel(message):
 
 @bot.message_handler(func=lambda message: message.text == "➕ Додати тренера")
 def add_trainer_start(message):
-    """Початок процесу додавання тренера"""
+    """Початок додавання тренера"""
     try:
         if message.from_user.id != ADMIN_ID:
             return
@@ -283,7 +257,7 @@ def add_trainer_start(message):
         user_states[message.chat.id] = "waiting_trainer_user_id"
         bot.send_message(
             message.chat.id,
-            "Введи Telegram ID тренера (числовой ID):\n(Приклад: 123456789)"
+            "Введи Telegram ID тренера:\n(Приклад: 123456789)"
         )
     except Exception as e:
         logger.error(f"❌ Помилка у add_trainer_start: {e}")
@@ -298,7 +272,6 @@ def get_trainer_user_id(message):
             bot.send_message(message.chat.id, "❌ ID має бути числом\nПопробуй ще раз:")
             return
         
-        # ✅ ИСПРАВЛЕНО: сохраняем как строку
         trainer_data[message.chat.id] = {"user_id": str(user_id)}
         user_states[message.chat.id] = "waiting_trainer_name"
         bot.send_message(message.chat.id, "Введи ім'я тренера:")
@@ -311,13 +284,13 @@ def get_trainer_name(message):
     try:
         trainer_data[message.chat.id]["name"] = message.text
         user_states[message.chat.id] = "waiting_trainer_description"
-        bot.send_message(message.chat.id, "Введи опис тренера (досвід, кваліфікація тощо):")
+        bot.send_message(message.chat.id, "Введи опис тренера:")
     except Exception as e:
         logger.error(f"❌ Помилка у get_trainer_name: {e}")
 
 @bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_trainer_description")
 def get_trainer_description(message):
-    """Отримання опису та збереження тренера в БД"""
+    """Отримання опису та збереження"""
     try:
         trainer_data[message.chat.id]["description"] = message.text
         data = trainer_data[message.chat.id]
@@ -328,11 +301,12 @@ def get_trainer_description(message):
             return
         
         try:
-            # ✅ user_id уже строка
-            db.execute(
-                "INSERT INTO trainers (user_id, name, description) VALUES (?, ?, ?)",
-                [data["user_id"], data["name"], data["description"]]
-            )
+            # ✅ ИСПРАВЛЕНО: SQL без параметров, с экранированием кавычек
+            query = f"""
+            INSERT INTO trainers (user_id, name, description) 
+            VALUES ('{data["user_id"]}', '{data["name"].replace("'", "''")}', '{data["description"].replace("'", "''")}')
+            """
+            db.execute(query)
             
             logger.info(f"✅ Тренер додан: {data['name']} (ID: {data['user_id']})")
             bot.send_message(
@@ -342,7 +316,7 @@ def get_trainer_description(message):
             
         except Exception as db_error:
             error_str = str(db_error).lower()
-            if "unique" in error_str or "constraint" in error_str:
+            if "unique" in error_str:
                 bot.send_message(
                     message.chat.id,
                     f"❌ Тренер з ID {data['user_id']} уже існує"
@@ -361,7 +335,7 @@ def get_trainer_description(message):
 
 @bot.message_handler(func=lambda message: message.text == "➖ Видалити тренера")
 def delete_trainer_start(message):
-    """Показ списку тренерів для видалення"""
+    """Показ списку тренерів"""
     try:
         if message.from_user.id != ADMIN_ID:
             return
@@ -371,7 +345,7 @@ def delete_trainer_start(message):
             bot.send_message(message.chat.id, "❌ Помилка підключення до БД")
             return
         
-        result = db.execute("SELECT id, name, user_id FROM trainers ORDER BY name")
+        result = db.execute("SELECT id, name FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
         if not trainers:
@@ -379,7 +353,6 @@ def delete_trainer_start(message):
             return
         
         markup = types.InlineKeyboardMarkup()
-        
         for trainer in trainers:
             trainer_id = trainer[0]
             name = trainer[1]
@@ -389,11 +362,10 @@ def delete_trainer_start(message):
             )
             markup.add(btn)
         
-        bot.send_message(message.chat.id, "Вибери тренера для видалення:", reply_markup=markup)
+        bot.send_message(message.chat.id, "Вибери тренера:", reply_markup=markup)
         
     except Exception as e:
         logger.error(f"❌ Помилка у delete_trainer_start: {e}")
-        bot.send_message(message.chat.id, f"❌ Помилка: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delete_trainer_"))
 def delete_trainer_confirm(call):
@@ -410,33 +382,31 @@ def delete_trainer_confirm(call):
             bot.answer_callback_query(call.id, "❌ Помилка підключення", show_alert=True)
             return
         
-        # ✅ Конвертируем trainer_id в строку
-        result = db.execute("SELECT name FROM trainers WHERE id = ?", [trainer_id])
+        result = db.execute(f"SELECT name FROM trainers WHERE id = {trainer_id}")
         trainer = result.rows[0] if (hasattr(result, 'rows') and result.rows) else None
         
         if not trainer:
             bot.answer_callback_query(call.id, "❌ Тренер не знайдений", show_alert=True)
             return
         
-        db.execute("DELETE FROM trainers WHERE id = ?", [trainer_id])
+        db.execute(f"DELETE FROM trainers WHERE id = {trainer_id}")
         
         logger.info(f"✅ Тренер видалений: {trainer[0]}")
         bot.answer_callback_query(call.id, "✅ Видалено!", show_alert=False)
         bot.edit_message_text(
-            f"✅ Тренер '{trainer[0]}' видалений із системи",
+            f"✅ Тренер видалений",
             call.message.chat.id,
             call.message.message_id
         )
         
     except Exception as e:
         logger.error(f"❌ Помилка у delete_trainer_confirm: {e}")
-        bot.answer_callback_query(call.id, f"❌ Помилка: {e}", show_alert=True)
 
 # ===== СПИСОК ТРЕНЕРІВ =====
 
 @bot.message_handler(func=lambda message: message.text == "📋 Список тренерів")
 def list_trainers(message):
-    """Показ усіх тренерів"""
+    """Показ всех тренеров"""
     try:
         if message.from_user.id != ADMIN_ID:
             return
@@ -450,30 +420,28 @@ def list_trainers(message):
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
         if not trainers:
-            bot.send_message(message.chat.id, "📭 Список тренерів порожній")
+            bot.send_message(message.chat.id, "📭 Список порожній")
             return
         
         text = "📋 **Список тренерів:**\n\n"
         for idx, trainer in enumerate(trainers, 1):
             name = trainer[1]
             user_id = trainer[2]
-            desc = trainer[3] or "Немає опису"
-            text += f"{idx}. **{name}** (ID: {user_id})\n"
-            text += f"   _{desc}_\n\n"
+            desc = trainer[3] or "Без опису"
+            text += f"{idx}. **{name}** (ID: {user_id})\n_{desc}_\n\n"
         
         bot.send_message(message.chat.id, text, parse_mode="Markdown")
         
     except Exception as e:
         logger.error(f"❌ Помилка у list_trainers: {e}")
-        bot.send_message(message.chat.id, f"❌ Помилка: {e}")
 
 # =========================
-# 👤 ВИБІР ТРЕНЕРА (КОРИСТУВАЧ)
+# 👤 ВИБІР ТРЕНЕРА
 # =========================
 
 @bot.message_handler(func=lambda message: message.text == "Вибрати тренера")
 def choose_trainer_start(message):
-    """Початок процесу вибору тренера"""
+    """Початок вибору тренера"""
     try:
         user_states[message.chat.id] = "waiting_phone"
         
@@ -483,7 +451,7 @@ def choose_trainer_start(message):
         
         bot.send_message(
             message.chat.id,
-            "Поділись своїм номером телефону:",
+            "Поділись номером:",
             reply_markup=markup
         )
     except Exception as e:
@@ -491,111 +459,85 @@ def choose_trainer_start(message):
 
 @bot.message_handler(content_types=['contact'])
 def get_phone(message):
-    """Отримання номера телефону"""
+    """Отримання номера"""
     try:
         if user_states.get(message.chat.id) != "waiting_phone":
             return
         
-        user_form[message.chat.id] = {}
-        user_form[message.chat.id]["phone"] = message.contact.phone_number
-        
+        user_form[message.chat.id] = {"phone": message.contact.phone_number}
         user_states[message.chat.id] = "waiting_user_name"
         
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("◀️ Скасувати")
         
-        bot.send_message(
-            message.chat.id,
-            "Спасибі! Тепер введи своє ім'я:",
-            reply_markup=markup
-        )
+        bot.send_message(message.chat.id, "Введи своє ім'я:", reply_markup=markup)
     except Exception as e:
         logger.error(f"❌ Помилка у get_phone: {e}")
 
 @bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_user_name")
 def get_user_name(message):
-    """Отримання імені користувача"""
+    """Отримання імені"""
     try:
         if message.text == "◀️ Скасувати":
-            cancel_selection(message)
+            user_states.pop(message.chat.id, None)
+            user_form.pop(message.chat.id, None)
             return
         
         user_form[message.chat.id]["name"] = message.text
         user_states[message.chat.id] = "waiting_level"
         
-        bot.send_message(
-            message.chat.id,
-            "Опиши свій рівень гри в шахи:\n(Наприклад: Початківець, Середній, Продвинутий)"
-        )
+        bot.send_message(message.chat.id, "Рівень гри:")
     except Exception as e:
         logger.error(f"❌ Помилка у get_user_name: {e}")
 
 @bot.message_handler(func=lambda message: user_states.get(message.chat.id) == "waiting_level")
 def get_level(message):
-    """Отримання рівня та показ списку тренерів"""
+    """Отримання рівня"""
     try:
         if message.text == "◀️ Скасувати":
-            cancel_selection(message)
+            user_states.pop(message.chat.id, None)
+            user_form.pop(message.chat.id, None)
             return
         
         user_form[message.chat.id]["level"] = message.text
         
         db = get_db_client()
         if db is None:
-            bot.send_message(message.chat.id, "❌ Помилка підключення до БД")
-            cancel_selection(message)
+            bot.send_message(message.chat.id, "❌ Помилка підключення")
             return
         
         result = db.execute("SELECT id, name, description, user_id FROM trainers ORDER BY name")
         trainers = result.rows if hasattr(result, 'rows') and result.rows else []
         
         if not trainers:
-            bot.send_message(
-                message.chat.id,
-                "❌ На жаль, зараз немає доступних тренерів. Спробуй пізніше."
-            )
-            cancel_selection(message)
+            bot.send_message(message.chat.id, "❌ Немає тренерів")
             return
         
         markup = types.InlineKeyboardMarkup()
-        
         for trainer in trainers:
             trainer_id = trainer[0]
             name = trainer[1]
-            btn = types.InlineKeyboardButton(
-                text=f"👨‍🏫 {name}",
-                callback_data=f"choose_trainer_{trainer_id}"
-            )
+            btn = types.InlineKeyboardButton(text=f"👨‍🏫 {name}", callback_data=f"choose_trainer_{trainer_id}")
             markup.add(btn)
         
-        bot.send_message(
-            message.chat.id,
-            "Вибери свого тренера:",
-            reply_markup=markup
-        )
+        bot.send_message(message.chat.id, "Вибери тренера:", reply_markup=markup)
         user_states[message.chat.id] = "trainer_selected"
         
     except Exception as e:
         logger.error(f"❌ Помилка у get_level: {e}")
-        bot.send_message(message.chat.id, f"❌ Помилка: {e}")
-        cancel_selection(message)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("choose_trainer_"))
 def send_request_to_trainer(call):
-    """Надіслання заявки вибраному тренеру"""
+    """Надіслання заявки"""
     try:
         trainer_id = call.data.split("_")[2]
         
         db = get_db_client()
         if db is None:
-            bot.answer_callback_query(call.id, "❌ Помилка підключення", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Помилка", show_alert=True)
             return
         
-        # ✅ Конвертируем trainer_id в строку
-        result = db.execute(
-            "SELECT user_id, name FROM trainers WHERE id = ?",
-            [trainer_id]
-        )
+        result = db.execute(f"SELECT user_id, name FROM trainers WHERE id = {trainer_id}")
         trainer = result.rows[0] if (hasattr(result, 'rows') and result.rows) else None
         
         if not trainer:
@@ -603,75 +545,36 @@ def send_request_to_trainer(call):
             return
         
         trainer_user_id, trainer_name = trainer
-        # ✅ Конвертируем user_id в число для отправки сообщения
-        try:
-            trainer_user_id = int(trainer_user_id)
-        except (ValueError, TypeError):
-            logger.error(f"❌ Невалидный user_id: {trainer_user_id}")
-            bot.answer_callback_query(call.id, "❌ Помилка ID тренера", show_alert=True)
-            return
-        
         data = user_form.get(call.message.chat.id)
         
         if not data:
             bot.answer_callback_query(call.id, "❌ Помилка даних", show_alert=True)
             return
         
-        notification_text = f"""🎯 **Нова заявка на заняття!**
-
-👤 **Ім'я:** {data['name']}
-📱 **Телефон:** {data['phone']}
-♟️ **Рівень:** {data['level']}
-
-Тренер, зв'яжись з учнем!"""
+        notification_text = f"""🎯 **Нова заявка!**
+👤 Ім'я: {data['name']}
+📱 Телефон: {data['phone']}
+♟️ Рівень: {data['level']}"""
         
         try:
-            bot.send_message(trainer_user_id, notification_text, parse_mode="Markdown")
-            logger.info(f"✅ Заявка надіслана тренеру {trainer_name}")
-            bot.answer_callback_query(call.id, "✅ Заявка надіслана тренеру!", show_alert=False)
+            bot.send_message(int(trainer_user_id), notification_text, parse_mode="Markdown")
+            logger.info(f"✅ Заявка надіслана {trainer_name}")
+            bot.answer_callback_query(call.id, "✅ Надіслано!", show_alert=False)
         except Exception as send_error:
-            logger.warning(f"⚠️ Не вдалось надіслати заявку: {send_error}")
-            bot.send_message(
-                call.message.chat.id,
-                "⚠️ Не вдалось надіслати заявку тренеру. Перевір контакти адміністратора."
-            )
-        
-        # Підтвердження користувачу
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("Вибрати іншого тренера", "Зв'язатися з адміністратором")
-        
-        bot.edit_message_text(
-            f"✅ Твоя заявка надіслана тренеру {trainer_name}!\nВін зв'яжеться з тобою найближчим часом.",
-            call.message.chat.id,
-            call.message.message_id
-        )
-        
-        bot.send_message(
-            call.message.chat.id,
-            "Що дальше?",
-            reply_markup=markup
-        )
-        
-        # Очистка даних
-        user_states.pop(call.message.chat.id, None)
-        user_form.pop(call.message.chat.id, None)
-        
-    except Exception as e:
-        logger.error(f"❌ Помилка у send_request_to_trainer: {e}")
-        bot.answer_callback_query(call.id, f"❌ Помилка: {e}", show_alert=True)
-
-def cancel_selection(message):
-    """Скасування вибору тренера"""
-    try:
-        user_states.pop(message.chat.id, None)
-        user_form.pop(message.chat.id, None)
+            logger.warning(f"⚠️ Помилка: {send_error}")
+            bot.send_message(call.message.chat.id, "⚠️ Не вдалось надіслати")
         
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("Вибрати тренера", "Зв'язатися з адміністратором")
         
-        bot.send_message(message.chat.id, "Скасовано. Головне меню:", reply_markup=markup)
+        bot.edit_message_text(f"✅ Заявка надіслана", call.message.chat.id, call.message.message_id)
+        bot.send_message(call.message.chat.id, "Що далі?", reply_markup=markup)
+        
+        user_states.pop(call.message.chat.id, None)
+        user_form.pop(call.message.chat.id, None)
+        
     except Exception as e:
-        logger.error(f"❌ Помилка у cancel_selection: {e}")
+        logger.error(f"❌ Помилка: {e}")
 
 # =========================
 # 💬 ЧАТ З АДМІНІСТРАТОРОМ
@@ -679,129 +582,79 @@ def cancel_selection(message):
 
 @bot.message_handler(func=lambda message: message.text == "Зв'язатися з адміністратором")
 def contact_admin_start(message):
-    """Ініціація чату з адміністратором"""
+    """Запит на чат"""
     try:
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("🛑 Завершити чат")
         
-        bot.send_message(
-            message.chat.id,
-            "⏳ Очікуй відповіді адміністратора...\nАдміністратор скоро з вами зв'яжеться!",
-            reply_markup=markup
-        )
-        
+        bot.send_message(message.chat.id, "⏳ Очікуємо адміністратора...", reply_markup=markup)
         user_states[message.chat.id] = "waiting_admin_response"
         
-        # Надіслання повідомлення адміністратору
         admin_markup = types.InlineKeyboardMarkup()
-        admin_markup.add(
-            types.InlineKeyboardButton(
-                "✅ Прийняти чат",
-                callback_data=f"accept_chat_{message.chat.id}"
-            )
-        )
-        admin_markup.add(
-            types.InlineKeyboardButton(
-                "❌ Відхилити",
-                callback_data=f"reject_chat_{message.chat.id}"
-            )
-        )
+        admin_markup.add(types.InlineKeyboardButton("✅ Прийняти", callback_data=f"accept_chat_{message.chat.id}"))
+        admin_markup.add(types.InlineKeyboardButton("❌ Відхилити", callback_data=f"reject_chat_{message.chat.id}"))
         
         user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {message.chat.id}"
         
         bot.send_message(
             ADMIN_ID,
-            f"📞 **Запит на чат від користувача**\n\nКористувач: {user_info}\nІм'я: {message.from_user.first_name}",
-            reply_markup=admin_markup,
-            parse_mode="Markdown"
+            f"📞 Запит від {user_info}\nІм'я: {message.from_user.first_name}",
+            reply_markup=admin_markup
         )
-        logger.info(f"📞 Запит на чат від {user_info}")
+        logger.info(f"📞 Запит: {user_info}")
     except Exception as e:
-        logger.error(f"❌ Помилка у contact_admin_start: {e}")
+        logger.error(f"❌ Помилка: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("accept_chat_"))
 def accept_chat(call):
-    """Адміністратор приймає чат"""
+    """Адміністратор приймає"""
     try:
         user_id = int(call.data.split("_")[2])
         
         if user_id in admin_chats:
-            bot.answer_callback_query(call.id, "⚠️ Чат уже активний з іншим адміном", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ Вже активний", show_alert=True)
             return
         
         admin_chats[user_id] = call.from_user.id
         user_states[user_id] = "in_admin_chat"
         
-        bot.edit_message_text(
-            "✅ Чат прийнято! Починаємо спілкування.",
-            call.message.chat.id,
-            call.message.message_id
-        )
+        bot.edit_message_text("✅ Прийнято", call.message.chat.id, call.message.message_id)
         
-        try:
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add("🛑 Завершити чат")
-            
-            bot.send_message(
-                user_id,
-                "✅ Адміністратор прийняв вашу заявку!\n💬 Тепер ви можете спілкуватися з ним напряму.",
-                reply_markup=markup
-            )
-            logger.info(f"✅ Чат прийнято для користувача {user_id}")
-        except:
-            pass
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("🛑 Завершити чат")
+        
+        bot.send_message(user_id, "✅ Адміністратор прийняв!", reply_markup=markup)
+        logger.info(f"✅ Чат прийнято: {user_id}")
     except Exception as e:
-        logger.error(f"❌ Помилка у accept_chat: {e}")
+        logger.error(f"❌ Помилка: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reject_chat_"))
 def reject_chat(call):
-    """Адміністратор відхиляє чат"""
+    """Адміністратор відхиляє"""
     try:
         user_id = int(call.data.split("_")[2])
-        
-        bot.edit_message_text(
-            "❌ Чат відхилений.",
-            call.message.chat.id,
-            call.message.message_id
-        )
-        
+        bot.edit_message_text("❌ Відхилено", call.message.chat.id, call.message.message_id)
         user_states[user_id] = "main_menu"
         
-        try:
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add("Вибрати тренера", "Зв'язатися з адміністратором")
-            
-            bot.send_message(
-                user_id,
-                "❌ Адміністратор відхилив вашу заявку. Спробуй пізніше.",
-                reply_markup=markup
-            )
-            logger.info(f"❌ Чат відхилено для користувача {user_id}")
-        except:
-            pass
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("Вибрати тренера", "Зв'язатися з адміністратором")
+        
+        bot.send_message(user_id, "❌ Відхилено", reply_markup=markup)
+        logger.info(f"❌ Чат відхилено: {user_id}")
     except Exception as e:
-        logger.error(f"❌ Помилка у reject_chat: {e}")
+        logger.error(f"❌ Помилка: {e}")
 
 @bot.message_handler(func=lambda message: message.text == "🛑 Завершити чат")
 def end_chat(message):
-    """Завершення чату (користувач або адміністратор)"""
+    """Завершення чату"""
     try:
         if message.chat.id in admin_chats:
             admin_id = admin_chats[message.chat.id]
-            
-            bot.send_message(
-                message.chat.id,
-                "👋 Чат завершено. Спасибі за звернення!"
-            )
-            
+            bot.send_message(message.chat.id, "👋 Спасибі!")
             try:
-                bot.send_message(
-                    admin_id,
-                    f"👤 Користувач завершив чат (ID: {message.chat.id})"
-                )
+                bot.send_message(admin_id, f"👤 Користувач завершив (ID: {message.chat.id})")
             except:
                 pass
-            
             admin_chats.pop(message.chat.id, None)
         elif message.from_user.id == ADMIN_ID:
             user_id = None
@@ -812,46 +665,38 @@ def end_chat(message):
             
             if user_id:
                 try:
-                    bot.send_message(user_id, "👋 Адміністратор завершив чат.")
+                    bot.send_message(user_id, "👋 Адміністратор завершив")
                 except:
                     pass
                 admin_chats.pop(user_id, None)
-            else:
-                bot.send_message(message.chat.id, "❌ Немає активного чату")
-                return
         
         user_states[message.chat.id] = "main_menu"
-        
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("Вибрати тренера", "Зв'язатися з адміністратором")
-        bot.send_message(message.chat.id, "Головне меню:", reply_markup=markup)
-        logger.info(f"👋 Чат завершено для користувача {message.chat.id}")
+        bot.send_message(message.chat.id, "Меню:", reply_markup=markup)
+        logger.info(f"👋 Чат завершено: {message.chat.id}")
     except Exception as e:
-        logger.error(f"❌ Помилка у end_chat: {e}")
+        logger.error(f"❌ Помилка: {e}")
 
 @bot.message_handler(func=lambda message: message.chat.id in admin_chats and user_states.get(message.chat.id) == "in_admin_chat")
 def relay_user_message(message):
-    """Пересилання повідомлення від користувача до адміна"""
+    """Повідомлення від користувача"""
     try:
         if message.text == "🛑 Завершити чат":
             end_chat(message)
             return
         
         admin_id = admin_chats[message.chat.id]
-        
         try:
-            bot.send_message(
-                admin_id,
-                f"💬 Повідомлення від користувача:\n\n{message.text}"
-            )
+            bot.send_message(admin_id, f"💬 {message.text}")
         except:
             pass
     except Exception as e:
-        logger.error(f"❌ Помилка у relay_user_message: {e}")
+        logger.error(f"❌ Помилка: {e}")
 
 @bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID)
 def relay_admin_message(message):
-    """Пересилання повідомлення від адміна до користувача"""
+    """Повідомлення від адміна"""
     try:
         if message.text == "🛑 Завершити чат":
             end_chat(message)
@@ -864,82 +709,65 @@ def relay_admin_message(message):
                 break
         
         if not user_id:
-            bot.send_message(message.chat.id, "❌ Немає активного чату")
+            bot.send_message(message.chat.id, "❌ Немає чату")
             return
         
         try:
-            bot.send_message(
-                user_id,
-                f"💬 Адміністратор:\n\n{message.text}"
-            )
+            bot.send_message(user_id, f"💬 Адміністратор: {message.text}")
         except:
-            bot.send_message(message.chat.id, "❌ Не вдалось надіслати повідомлення користувачу")
+            bot.send_message(message.chat.id, "❌ Помилка")
     except Exception as e:
-        logger.error(f"❌ Помилка у relay_admin_message: {e}")
+        logger.error(f"❌ Помилка: {e}")
 
 # =========================
-# 🌐 FLASK WEBHOOK ENDPOINTS
+# 🌐 FLASK ENDPOINTS
 # =========================
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Telegram webhook handler"""
+    """Webhook"""
     try:
         json_data = request.get_json()
         update = telebot.types.Update.de_json(json_data)
         bot.process_new_updates([update])
     except Exception as e:
-        logger.error(f"❌ Помилка обробки webhook: {e}")
+        logger.error(f"❌ Webhook: {e}")
     return '', 200
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check для Render"""
+    """Health"""
     try:
         db = get_db_client()
         if db is None:
-            return 'DB_ERROR', 500
+            return 'ERROR', 500
         return 'OK', 200
     except:
         return 'ERROR', 500
 
-@app.route('/debug', methods=['GET'])
-def debug():
-    """Отладка стану бота"""
-    return {
-        'status': 'OK',
-        'db_initialized': db_initialized,
-        'users_online': len(user_states),
-        'admin_chats': len(admin_chats)
-    }, 200
-
 # =========================
-# 🚀 ЗАПУСК БОТА
+# 🚀 ЗАПУСК
 # =========================
 
 if __name__ == "__main__":
-    logger.info("🚀 Бот запускається...")
+    logger.info("🚀 Запуск...")
     
-    # Ініціалізація БД
     if not init_db():
-        logger.error("❌ Критична помилка: не вдалось ініціалізувати БД")
+        logger.error("❌ Помилка БД")
     
-    # Видалити старий webhook
     try:
         bot.remove_webhook()
-        logger.info("✅ Старий webhook видалено")
+        logger.info("✅ Webhook видалено")
     except:
         pass
     
-    # Встановити новий webhook
     webhook_url = f"{WEBHOOK_URL}/webhook"
     try:
         bot.set_webhook(url=webhook_url)
-        logger.info(f"✅ Webhook встановлено: {webhook_url}")
+        logger.info(f"✅ Webhook: {webhook_url}")
     except Exception as e:
-        logger.error(f"⚠️ Помилка встановлення webhook: {e}")
+        logger.error(f"❌ Webhook: {e}")
     
-    # Запустити Flask додаток
     port = int(os.getenv("PORT", 5000))
-    logger.info(f"🌐 Запуск Flask на порту {port}...")
+    logger.info(f"🌐 Запуск на порту {port}...")
     app.run(host='0.0.0.0', port=port, debug=False)
