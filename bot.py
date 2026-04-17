@@ -35,6 +35,9 @@ admin_chats  = {}   # {user_chat_id: admin_chat_id}
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
+@app.route("/")
+def uptime_check():
+    return "OK", 200
 
 # ==========================================================
 # 🗄️  TURSO DATABASE LAYER
