@@ -20,8 +20,7 @@ TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "ТВІЙ_ТОКЕН_БОТА")
 ADMIN_ID    = int(os.getenv("ADMIN_ID", "887078537"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 TURSO_URL   = os.getenv("TURSO_URL",   "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
-
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJ[...]
 MAX_DB_RETRIES = 3
 DB_RETRY_DELAY = 2
 
@@ -39,7 +38,6 @@ app = Flask(__name__)
 # ==========================================================
 # 🗄️  TURSO DATABASE LAYER
 # ==========================================================
-
 def _unpack_turso_value(v):
     if not isinstance(v, dict):
         return v
@@ -165,11 +163,9 @@ def init_db() -> bool:
         logger.error(f"❌ init_db: {e}")
         return False
 
-
 # ==========================================================
 # 🛠️  КОНСТАНТИ І ДОПОМІЖНІ ФУНКЦІЇ
 # ==========================================================
-
 BTN_CANCEL = "❌ Скасувати"
 BTN_EDIT   = "⚙️ Edit"
 BTN_BACK   = "⬅️ Назад"
@@ -248,11 +244,9 @@ def format_trainer_card(name: str, username: str, desc: str, index: int = None) 
         f"{'─' * 28}"
     )
 
-
 # ==========================================================
 # 🏁  /start
 # ==========================================================
-
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
     send_main_menu(message.chat.id, message.from_user.id,
@@ -262,7 +256,6 @@ def cmd_start(message):
 # ==========================================================
 # ❌  УНИВЕРСАЛЬНАЯ ОТМЕНА  (регистрируется первой!)
 # ==========================================================
-
 @bot.message_handler(func=lambda m: m.text == BTN_CANCEL)
 def universal_cancel(message):
     reset_to_main(message)
@@ -271,7 +264,6 @@ def universal_cancel(message):
 # ==========================================================
 # 👨‍🏫  НАШІ ТРЕНЕРИ (публичная кнопка в главном меню)
 # ==========================================================
-
 @bot.message_handler(func=lambda m: m.text == "👨‍🏫 Наші тренери")
 def show_our_trainers(message):
     db = get_db()
@@ -298,9 +290,15 @@ def show_our_trainers(message):
     bot.send_message(message.chat.id, header, parse_mode="Markdown")
 
     for i, row in enumerate(trainers, 1):
-        name  = str(row[1])
-        uname = str(row[2])
-        desc  = str(row[3]) if row[3] else ""
+        # Рaспаковка значений Turso (формат {type, value}) перед приведением к str
+        name  = _unpack_turso_value(row[1])
+        uname = _unpack_turso_value(row[2])
+        desc  = _unpack_turso_value(row[3])
+
+        name  = str(name)
+        uname = str(uname)
+        desc  = str(desc) if desc else "Опис не вказано"
+
         card  = format_trainer_card(name, uname, desc, index=i)
         bot.send_message(message.chat.id, card, parse_mode="Markdown")
 
@@ -315,7 +313,6 @@ def show_our_trainers(message):
 # ==========================================================
 # 👨‍💼  АДМІН-ПАНЕЛЬ
 # ==========================================================
-
 @bot.message_handler(func=lambda m: m.text == BTN_EDIT)
 def admin_panel(message):
     if message.from_user.id != ADMIN_ID:
@@ -331,7 +328,6 @@ def admin_back(message):
 
 
 # ── ДОДАТИ ТРЕНЕРА ─────────────────────────────────────
-
 @bot.message_handler(func=lambda m: m.text == "➕ Додати тренера")
 def add_trainer_start(message):
     if message.from_user.id != ADMIN_ID:
@@ -370,7 +366,7 @@ def add_trainer_name(message):
     user_states[message.chat.id] = "add_trainer_description"
     bot.send_message(
         message.chat.id,
-        "📝 *Додавання тренера* — крок 3/3\n\n"
+        "��� *Додавання тренера* — крок 3/3\n\n"
         "Введіть опис тренера _(досвід, звання, спеціалізація)_:",
         parse_mode="Markdown",
         reply_markup=cancel_only_markup()
@@ -411,7 +407,6 @@ def add_trainer_description(message):
 
 
 # ── ВИДАЛИТИ ТРЕНЕРА ────────────────────────────────────
-
 @bot.message_handler(func=lambda m: m.text == "➖ Видалити тренера")
 def delete_trainer_start(message):
     if message.from_user.id != ADMIN_ID:
@@ -429,31 +424,40 @@ def delete_trainer_start(message):
         bot.send_message(message.chat.id, "📭 Тренерів немає.", reply_markup=admin_menu_markup())
         return
 
-    markup = types.InlineKeyboardMarkup()
+    # Отправляем каждого тренера отдельным сообщением с кнопкой "🗑 Вилучити"
+    bot.send_message(message.chat.id, f"🗑 Оберіть тренера для видалення ({len(trainers)} чол.):\n⚠️ Видалення відбудеться одразу.")
     for row in trainers:
-        tid   = int(row[0])
-        name  = str(row[1])
-        uname = str(row[2])
-        markup.add(types.InlineKeyboardButton(
-            f"🗑 {name}  (@{uname})",
-            callback_data=f"deltrnr_{tid}"   # короткий ключ, без лишних "_"
-        ))
-    bot.send_message(
-        message.chat.id,
-        f"🗑 Оберіть тренера для видалення ({len(trainers)} чол.):\n"
-        "⚠️ Видалення відбудеться одразу.",
-        reply_markup=markup
-    )
+        # Распаковка значений Turso
+        tid_raw = _unpack_turso_value(row[0])
+        try:
+            tid = int(tid_raw)
+        except Exception:
+            # если не удалось привести к int — пропускаем
+            continue
+        name  = _unpack_turso_value(row[1])
+        uname = _unpack_turso_value(row[2])
+
+        name  = str(name) if name is not None else "Без імені"
+        uname = str(uname) if uname is not None else "no_username"
+
+        card = (
+            f"👨‍🏫 {name}\n"
+            f"📎 @{uname}\n"
+        )
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🗑 Вилучити", callback_data=f"delete_{tid}"))
+        bot.send_message(message.chat.id, card, reply_markup=markup)
 
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("deltrnr_"))
-def delete_trainer_confirm(call):
+@bot.callback_query_handler(func=lambda c: c.data.startswith("delete_"))
+def delete_trainer_handler(call):
     if call.from_user.id != ADMIN_ID:
         bot.answer_callback_query(call.id, "❌ Немає доступу", show_alert=True)
         return
 
     try:
-        tid = int(call.data.split("_")[1])
+        tid = int(call.data.split("_", 1)[1])
     except (IndexError, ValueError):
         bot.answer_callback_query(call.id, "❌ Некоректні дані", show_alert=True)
         return
@@ -467,7 +471,11 @@ def delete_trainer_confirm(call):
         if not result.rows:
             bot.answer_callback_query(call.id, "❌ Тренера не знайдено", show_alert=True)
             return
-        name = str(result.rows[0][0])
+        # распаковка результата на всякий случай
+        name_raw = result.rows[0][0]
+        name = _unpack_turso_value(name_raw) if isinstance(name_raw, dict) else name_raw
+        name = str(name)
+
         db.execute("DELETE FROM trainers WHERE id = ?", [tid])
         logger.info(f"🗑 Видалено тренера: {name} (id={tid})")
 
@@ -484,7 +492,6 @@ def delete_trainer_confirm(call):
 
 
 # ── СПИСОК ТРЕНЕРІВ (адмін) — красивые карточки ─────────
-
 @bot.message_handler(func=lambda m: m.text == "📋 Список тренерів")
 def list_trainers(message):
     if message.from_user.id != ADMIN_ID:
@@ -526,8 +533,7 @@ def list_trainers(message):
 # ==========================================================
 # 👤  ВИБІР ТРЕНЕРА (пользователь)
 # ==========================================================
-
-@bot.message_handler(func=lambda m: m.text == "♟️ Вибрати тренера")
+@bot.message_handler(func=lambda m: m.text == "♟️ Вибрати т��енера")
 def choose_trainer_start(message):
     user_states[message.chat.id] = "user_waiting_phone"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -640,7 +646,6 @@ def user_got_level(message):
 # ==========================================================
 # ✅  ОБРАТИ ТРЕНЕРА → запрос на подтверждение админу
 # ==========================================================
-
 @bot.callback_query_handler(func=lambda c: c.data.startswith("pick_"))
 def user_picked_trainer(call):
     cid = call.message.chat.id
@@ -734,7 +739,6 @@ def user_picked_trainer(call):
 # ==========================================================
 # ✅ / ❌  АДМІН ПІДТВЕРДЖУЄ / ВІДХИЛЯЄ ЗАПИС
 # ==========================================================
-
 @bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_enroll_"))
 def admin_confirm_enroll(call):
     if call.from_user.id != ADMIN_ID:
@@ -846,7 +850,6 @@ def admin_reject_enroll(call):
 # ==========================================================
 # 💬  ЧАТ З АДМІНІСТРАТОРОМ
 # ==========================================================
-
 @bot.message_handler(func=lambda m: m.text == "💬 Зв'язатися з адміністратором")
 def contact_admin_start(message):
     user_states[message.chat.id] = "waiting_admin_response"
@@ -855,7 +858,7 @@ def contact_admin_start(message):
     bot.send_message(
         message.chat.id,
         "⏳ Запит надіслано адміністратору\\. Очікуйте…\n"
-        "Натисніть *❌ Скасувати*, щоб повернутись до меню\\.",
+        "Натисніть *❌ Скасувати*, щоб повернутис�� до меню\\.",
         parse_mode="MarkdownV2",
         reply_markup=markup
     )
@@ -949,7 +952,6 @@ def relay_admin_to_user(message):
 # ==========================================================
 # 🌐  FLASK ENDPOINTS
 # ==========================================================
-
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
@@ -1004,7 +1006,6 @@ def debug_db():
 # ==========================================================
 # 🚀  ЗАПУСК
 # ==========================================================
-
 if __name__ == "__main__":
     logger.info("🚀 Запуск бота…")
     if not init_db():
@@ -1021,4 +1022,3 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     logger.info(f"🌐 Порт {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
-
