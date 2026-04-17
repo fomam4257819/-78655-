@@ -25,7 +25,7 @@ MAX_DB_RETRIES = 3
 DB_RETRY_DELAY = 2
 
 # =========================
-# 📊 СТАНИ СЕСІЙ (в пам'яті)
+# 📊 СТАНИ С��СІЙ (в пам'яті)
 # =========================
 user_states  = {}   # {chat_id: "state_name"}
 user_form    = {}   # {chat_id: {phone, name, level, trainer_id, trainer_name, trainer_username}}
@@ -119,7 +119,7 @@ def _init_client() -> bool:
     try:
         _client = TursoClient(url=TURSO_URL, auth_token=TURSO_TOKEN)
         _client.execute("SELECT 1")
-        logger.info("✅ Підключено до Turso")
+        logger.info("✅ Підключено д�� Turso")
         return True
     except Exception as e:
         logger.error(f"❌ _init_client: {e}")
@@ -328,19 +328,20 @@ def admin_back(message):
 
 
 # ── ДОДАТИ ТРЕНЕРА ─────────────────────────────────────
-# Теперь обработчик ищет подстроку "Додати тренера" — устойчивее к вариациям эмодзи
-@bot.message_handler(func=lambda m: m.text and "Додати тренера" in m.text)
+@bot.message_handler(func=lambda m: m.text == "➕ Додати тренера")
 def add_trainer_start(message):
     if message.from_user.id != ADMIN_ID:
         return
+
     trainer_form[message.chat.id] = {}
     user_states[message.chat.id]  = "add_trainer_username"
+
     bot.send_message(
         message.chat.id,
-        "📝 *Додавання тренера* — крок 1/3\n\n"
-        "Введіть @username тренера у Telegram:\n"
-        "_(приклад: @chess\\_coach\\_ivan)_",
-        parse_mode="Markdown",
+        "📝 Додавання тренера — крок 1/3\n\n"
+        "Введіть @username тренера\n\n"
+        "Приклад:\n"
+        "@chess_coach_ivan",
         reply_markup=cancel_only_markup()
     )
 
@@ -365,7 +366,6 @@ def add_trainer_username(message):
 def add_trainer_name(message):
     trainer_form[message.chat.id]["name"] = message.text.strip()
     user_states[message.chat.id] = "add_trainer_description"
-    # Исправлена битая строка — теперь корректный текст шага 3
     bot.send_message(
         message.chat.id,
         "📝 *Додавання тренера* — крок 3/3\n\n"
@@ -535,8 +535,7 @@ def list_trainers(message):
 # ==========================================================
 # 👤  ВИБІР ТРЕНЕРА (пользователь)
 # ==========================================================
-# Исправлен обработчик: ищем подстроку "Вибрати тренера" (устойчивее к вариациям эмодзи/кодировок)
-@bot.message_handler(func=lambda m: m.text and "Вибрати тренера" in m.text)
+@bot.message_handler(func=lambda m: m.text == "♟️ Вибрати тренера")
 def choose_trainer_start(message):
     user_states[message.chat.id] = "user_waiting_phone"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -616,15 +615,24 @@ def user_got_level(message):
     bot.send_message(
         message.chat.id,
         f"✅ Рівень *{message.text}* збережено\\!\n\n"
-        f"👇 Оберіть тренера — натисніть *Обрати* під карткою:",
+        f"👇 Оберіть тренера — натисніть кнопку під карткою:",
         parse_mode="MarkdownV2",
         reply_markup=cancel_only_markup()
     )
 
+    # Исправленная раскладка значений Turso и новая кнопка
     for row in trainers:
-        tid  = int(row[0])
-        name = str(row[1])
-        desc = str(row[2]) if row[2] else "Опис відсутній"
+        tid_raw  = _unpack_turso_value(row[0])
+        name_raw = _unpack_turso_value(row[1])
+        desc_raw = _unpack_turso_value(row[2])
+
+        try:
+            tid = int(tid_raw)
+        except Exception:
+            continue
+
+        name = str(name_raw) if name_raw is not None else "Без імені"
+        desc = str(desc_raw) if desc_raw else "Опис відсутній"
 
         card = (
             f"👨‍🏫 *{name}*\n"
@@ -632,10 +640,12 @@ def user_got_level(message):
             f"📝 {desc}"
         )
         pick_markup = types.InlineKeyboardMarkup()
-        pick_markup.add(types.InlineKeyboardButton(
-            f"✅ Обрати {name}",
-            callback_data=f"pick_{tid}"
-        ))
+        pick_markup.add(
+            types.InlineKeyboardButton(
+                "📚 Записатися на курс",
+                callback_data=f"pick_{tid}"
+            )
+        )
         bot.send_message(
             message.chat.id,
             card,
@@ -669,17 +679,25 @@ def user_picked_trainer(call):
         bot.answer_callback_query(call.id, "❌ Помилка БД", show_alert=True)
         return
     try:
-        result  = db.execute("SELECT username, name FROM trainers WHERE id = ?", [tid])
-        trainer = result.rows[0] if result.rows else None
+        # Получаем тренера из БД и распаковываем значения
+        result = db.execute(
+            "SELECT username, name FROM trainers WHERE id = ?",
+            [tid]
+        ).rows
+
+        if not result:
+            bot.answer_callback_query(call.id, "❌ Тренер не знайдений", show_alert=True)
+            return
+
+        trainer_username = _unpack_turso_value(result[0][0])
+        trainer_name     = _unpack_turso_value(result[0][1])
+
+        trainer_username = str(trainer_username)
+        trainer_name     = str(trainer_name)
+
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ {str(e)[:50]}", show_alert=True)
         return
-    if not trainer:
-        bot.answer_callback_query(call.id, "❌ Тренера не знайдено", show_alert=True)
-        return
-
-    trainer_username = str(trainer[0])
-    trainer_name     = str(trainer[1])
 
     # Сохраняем данные тренера в сессию — нужны при подтверждении
     data["trainer_id"]       = tid
