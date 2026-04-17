@@ -20,7 +20,7 @@ TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "ТВІЙ_ТОКЕН_БОТА")
 ADMIN_ID    = int(os.getenv("ADMIN_ID", "887078537"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 TURSO_URL   = os.getenv("TURSO_URL",   "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQ[...]
 MAX_DB_RETRIES = 3
 DB_RETRY_DELAY = 2
 
@@ -29,7 +29,7 @@ DB_RETRY_DELAY = 2
 # =========================
 user_states  = {}   # {chat_id: "state_name"}
 user_form    = {}   # {chat_id: {phone, name, level, trainer_id, trainer_name, trainer_username}}
-trainer_form = {}   # {chat_id: {username, name, description}}
+trainer_form = {}   # {chat_id: {username, name, description}} or used for admin temporary storage
 admin_chats  = {}   # {user_chat_id: admin_chat_id}
 
 bot = telebot.TeleBot(TOKEN)
@@ -254,7 +254,7 @@ def cmd_start(message):
 
 
 # ==========================================================
-# ❌  УНИВЕРСАЛЬНАЯ ОТМЕНА  (регистрируется первой!)
+# ❌  УНИВЕРСАЛЬНАЯ О��МЕНА  (регистрируется первой!)
 # ==========================================================
 @bot.message_handler(func=lambda m: m.text == BTN_CANCEL)
 def universal_cancel(message):
@@ -356,7 +356,7 @@ def add_trainer_username(message):
     user_states[message.chat.id] = "add_trainer_name"
     bot.send_message(
         message.chat.id,
-        "📝 *Додавання тренера* — крок 2/3\n\nВведіть повне ім'я тренера:",
+        "📝 *Д��давання тренера* — крок 2/3\n\nВведіть повне ім'я тренера:",
         parse_mode="Markdown",
         reply_markup=cancel_only_markup()
     )
@@ -792,13 +792,13 @@ def admin_confirm_enroll(call):
     user_phone       = data["phone"]            if data else "—"
     user_level       = data["level"]            if data else "—"
 
-    # --- Сообщение ученику с улучшенным текстом ---
+    # --- Сообщение ученику с уточнением, что адмiн зв'яжеться ---
     try:
         bot.send_message(
             user_cid,
             f"🎉 *Запис підтверджено\\!*\n\n"
             f"Адміністратор підтвердив ваш запис до тренера *{trainer_name}*\\.\n"
-            f"⏳ Тренер незабаром зв'яжеться з вами для організації занять\\.\n\n"
+            f"⏳ Адміністратор незабаром зв'яжеться з вами для узгодження деталей занять\\.\n\n"
             f"_Дякуємо за довіру\\!_",
             parse_mode="MarkdownV2"
         )
@@ -828,43 +828,52 @@ def admin_confirm_enroll(call):
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("reject_enroll_"))
 def admin_reject_enroll(call):
+    # Новый поток: админ сначала предоставляет причину, только потом ученик получит сообщение
     if call.from_user.id != ADMIN_ID:
         bot.answer_callback_query(call.id, "❌ Тільки для адміна", show_alert=True)
         return
 
     parts = call.data.split("_")
-    # ["reject","enroll","cid","tid"]
     try:
         user_cid = int(parts[2])
-        tid      = int(parts[3])
-    except (IndexError, ValueError):
+        tid = int(parts[3])
+    except Exception:
         bot.answer_callback_query(call.id, "❌ Некоректні дані", show_alert=True)
         return
 
+    # Берём текущее имя тренера из сессии ученика, если есть
     data = user_form.get(user_cid)
-    trainer_name = data["trainer_name"] if data else "тренера"
+    trainer_name = data.get("trainer_name") if data else ""
 
+    # Сохраняем состояние ожидания причины у администратора
     user_states[ADMIN_ID] = "waiting_reject_reason"
 
+    # Сохраняем временные данные админу (по chat_id == ADMIN_ID)
     trainer_form[ADMIN_ID] = {
         "user_cid": user_cid,
         "trainer_name": trainer_name,
         "tid": tid
     }
 
+    # Подтверждаем callback и просим причину
     bot.answer_callback_query(call.id)
 
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    bot.edit_message_text(
-        call.message.text + "\n\n⏳ *Адмін пишет причину відмови...*",
-        call.message.chat.id, call.message.message_id,
-        parse_mode="MarkdownV2"
-    )
+    # Убираем кнопки в сообщении админа и помечаем, что админ пишет причину
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        bot.edit_message_text(
+            call.message.text + "\n\n⏳ *Очікуємо причину від адміністратора...*",
+            call.message.chat.id, call.message.message_id,
+            parse_mode="MarkdownV2"
+        )
+    except Exception:
+        pass
 
     bot.send_message(
         call.message.chat.id,
         "❌ *Відхилення запису*\n\n"
         "Напишіть причину відмови для учня:",
+        parse_mode="MarkdownV2",
         reply_markup=cancel_only_markup()
     )
 
@@ -872,36 +881,38 @@ def admin_reject_enroll(call):
 @bot.message_handler(func=lambda m: user_states.get(m.chat.id) == "waiting_reject_reason")
 def admin_write_reject_reason(message):
     data = trainer_form.get(message.chat.id)
-
     if not data:
-        bot.send_message(message.chat.id, "❌ Помилка: дані не знайдені")
+        # защита на случай рассинхронизации
+        bot.send_message(message.chat.id, "❌ Помилка: дані не знайдені.", reply_markup=admin_menu_markup())
+        user_states.pop(message.chat.id, None)
         return
 
-    reason = message.text
+    reason = message.text or ""
     user_cid = data["user_cid"]
-    trainer_name = data["trainer_name"]
-    tid = data["tid"]
+    trainer_name = data.get("trainer_name", "")
 
-    # --- Сообщение ученику с причиной ---
+    # Отправляе�� ученику уведомление с причиной
     try:
         bot.send_message(
             user_cid,
-            f"❌ *На жаль, запис відхилено\\.*\n\n"
+            f"❌ *Запис відхилено\\!*\n\n"
             f"👨‍🏫 Тренер: *{trainer_name}*\n\n"
-            f"📝 *Причина:*\n_{reason}_\n\n"
-            f"Спробуйте обрати іншого тренера або зверніться до адміністратора\\.",
+            f"📝 *Причина:*\n{reason}\n\n"
+            f"Спробуйте обрати іншого тренера або зверніться до адміністратора.",
             parse_mode="MarkdownV2",
             reply_markup=main_menu_markup(user_cid)
         )
     except Exception as e:
         logger.warning(f"Не вдалося надіслати учню {user_cid}: {e}")
 
+    # Подтверждение админу
     bot.send_message(
         message.chat.id,
-        "✅ *Учня повідомлено про відмову*",
+        "✅ Учня повідомлено про відмову",
         reply_markup=admin_menu_markup()
     )
 
+    # Очистка сессий
     user_states.pop(message.chat.id, None)
     trainer_form.pop(message.chat.id, None)
     user_form.pop(user_cid, None)
