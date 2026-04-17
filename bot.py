@@ -20,7 +20,7 @@ TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "ТВІЙ_ТОКЕН_БОТА")
 ADMIN_ID    = int(os.getenv("ADMIN_ID", "887078537"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
 TURSO_URL   = os.getenv("TURSO_URL",   "https://1qaz2wsx-yhbvgt65.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQiOiI3NmJlZDlhMy01Zjk1LTQ0OGYtYThkYi1kZTY2OTNmNjcwZTAifQ.fN9MZ5inviHOnUNqhrW20hbt1oUmHS6E2auA_grZ6pcv02NvEKEmrI5Ms_oSnwbBM1nTsR-TmE7SSIrB4utKDw")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MDc4NjA1NDEsImlhdCI6MTc3NjMyNDU0MSwiaWQiOiIwMTlkOTUyZC03YjAxLTc3N2QtYjE4NS03MDEzY2JjOWYwMDkiLCJyaWQ[...]
 MAX_DB_RETRIES = 3
 DB_RETRY_DELAY = 2
 
@@ -328,7 +328,8 @@ def admin_back(message):
 
 
 # ── ДОДАТИ ТРЕНЕРА ─────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text == "➕ Додати тренера")
+# Теперь обработчик ищет подстроку "Додати тренера" — устойчивее к вариациям эмодзи
+@bot.message_handler(func=lambda m: m.text and "Додати тренера" in m.text)
 def add_trainer_start(message):
     if message.from_user.id != ADMIN_ID:
         return
@@ -364,9 +365,10 @@ def add_trainer_username(message):
 def add_trainer_name(message):
     trainer_form[message.chat.id]["name"] = message.text.strip()
     user_states[message.chat.id] = "add_trainer_description"
+    # Исправлена битая строка — теперь корректный текст шага 3
     bot.send_message(
         message.chat.id,
-        "��� *Додавання тренера* — крок 3/3\n\n"
+        "📝 *Додавання тренера* — крок 3/3\n\n"
         "Введіть опис тренера _(досвід, звання, спеціалізація)_:",
         parse_mode="Markdown",
         reply_markup=cancel_only_markup()
@@ -533,7 +535,8 @@ def list_trainers(message):
 # ==========================================================
 # 👤  ВИБІР ТРЕНЕРА (пользователь)
 # ==========================================================
-@bot.message_handler(func=lambda m: m.text == "♟️ Вибрати т��енера")
+# Исправлен обработчик: ищем подстроку "Вибрати тренера" (устойчивее к вариациям эмодзи/кодировок)
+@bot.message_handler(func=lambda m: m.text and "Вибрати тренера" in m.text)
 def choose_trainer_start(message):
     user_states[message.chat.id] = "user_waiting_phone"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -858,7 +861,7 @@ def contact_admin_start(message):
     bot.send_message(
         message.chat.id,
         "⏳ Запит надіслано адміністратору\\. Очікуйте…\n"
-        "Натисніть *❌ Скасувати*, щоб повернутис�� до меню\\.",
+        "Натисніть *❌ Скасувати*, щоб повернутись до меню\\.",
         parse_mode="MarkdownV2",
         reply_markup=markup
     )
