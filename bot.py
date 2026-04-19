@@ -177,8 +177,29 @@ BTN_BACK   = "⬅️ Назад"
 
 ADMIN_RESERVED = {
     BTN_EDIT, BTN_BACK, BTN_CANCEL,
-    "➕ Додати тренера", "➖ Видалити тренера", "📋 Список тренерів",
+    "➕ Додати тренера", "➖ Видалити тренера", "📋 Список тренерів", "📊 Статистика",
 }
+
+
+# ==========================================================
+# 🏅  БЕЙДЖІ РІВНІВ — красиве відображення рівня гравця
+# ==========================================================
+LEVEL_BADGE = {
+    "🌱 Початківець": "🌱 Початківець  │ навчаємось азам",
+    "🎯 Аматор":      "🎯 Аматор       │ знає основи",
+    "⚔️ Просунутий":  "⚔️ Просунутий   │ серйозний гравець",
+    "👑 Експерт":     "👑 Експерт      │ майстер дошки",
+}
+
+# ==========================================================
+# ⏳  TYPING ACTION — ефект "бот друкує..."
+# ==========================================================
+def typing(chat_id: int):
+    """Показує індикатор 'друкує...' — відчуття живого бота."""
+    try:
+        bot.send_chat_action(chat_id, "typing")
+    except Exception:
+        pass
 
 
 def main_menu_markup(user_id: int) -> types.ReplyKeyboardMarkup:
@@ -193,7 +214,7 @@ def main_menu_markup(user_id: int) -> types.ReplyKeyboardMarkup:
 def admin_menu_markup() -> types.ReplyKeyboardMarkup:
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add("➕ Додати тренера", "➖ Видалити тренера")
-    m.add("📋 Список тренерів")
+    m.add("📋 Список тренерів", "📊 Статистика")
     m.add(BTN_BACK)
     return m
 
@@ -259,7 +280,10 @@ def format_trainer_card(name: str, username: str, desc: str, index: int = None) 
 # ==========================================================
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
+    cid        = message.chat.id
+    uid        = message.from_user.id
     first_name = message.from_user.first_name or "друже"
+    typing(cid)
     welcome = (
         "♟️ *Шахова школа*\n"
         "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
@@ -270,7 +294,7 @@ def cmd_start(message):
         "› Зв'язатися з адміністратором\n\n"
         "⬇️ _Оберіть дію нижче_"
     )
-    send_main_menu(message.chat.id, message.from_user.id, welcome, parse_mode="MarkdownV2")
+    send_main_menu(cid, uid, welcome, parse_mode="MarkdownV2")
 
 
 # ==========================================================
@@ -286,6 +310,7 @@ def universal_cancel(message):
 # ==========================================================
 @bot.message_handler(func=lambda m: m.text == "👨‍🏫 Наші тренери")
 def show_our_trainers(message):
+    typing(message.chat.id)
     db = get_db()
     if not db:
         bot.send_message(message.chat.id, "❌ Помилка підключення до БД.")
@@ -341,6 +366,7 @@ def admin_panel(message):
     if message.from_user.id != ADMIN_ID:
         bot.send_message(message.chat.id, "❌ Немає доступу.")
         return
+    typing(message.chat.id)
     user_states[message.chat.id] = "admin_panel"
     bot.send_message(
         message.chat.id,
@@ -454,6 +480,7 @@ def add_trainer_description(message):
 def delete_trainer_start(message):
     if message.from_user.id != ADMIN_ID:
         return
+    typing(message.chat.id)
     db = get_db()
     if not db:
         bot.send_message(message.chat.id, "❌ Помилка підключення до БД.")
@@ -601,6 +628,7 @@ def cancel_delete_trainer(call):
 def list_trainers(message):
     if message.from_user.id != ADMIN_ID:
         return
+    typing(message.chat.id)
     db = get_db()
     if not db:
         bot.send_message(message.chat.id, "❌ Помилка підключення до БД.")
@@ -639,6 +667,7 @@ def list_trainers(message):
 # ==========================================================
 @bot.message_handler(func=lambda m: m.text == "♟️ Вибрати тренера")
 def choose_trainer_start(message):
+    typing(message.chat.id)
     user_states[message.chat.id] = "user_waiting_phone"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("📱 Поділитися номером", request_contact=True))
@@ -659,6 +688,7 @@ def choose_trainer_start(message):
 def user_got_phone(message):
     if user_states.get(message.chat.id) != "user_waiting_phone":
         return
+    typing(message.chat.id)
     user_form[message.chat.id] = {"phone": message.contact.phone_number}
     user_states[message.chat.id] = "user_waiting_name"
     bot.send_message(
@@ -674,6 +704,7 @@ def user_got_phone(message):
 
 @bot.message_handler(func=lambda m: user_states.get(m.chat.id) == "user_waiting_name")
 def user_got_name(message):
+    typing(message.chat.id)
     user_form[message.chat.id]["name"] = message.text.strip()
     user_states[message.chat.id] = "user_waiting_level"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -697,7 +728,9 @@ def user_got_level(message):
     if message.text not in allowed:
         bot.send_message(message.chat.id, "Оберіть рівень із кнопок нижче.")
         return
+    typing(message.chat.id)
     user_form[message.chat.id]["level"] = message.text
+    level_badge = LEVEL_BADGE.get(message.text, message.text)
 
     db = get_db()
     if not db:
@@ -725,7 +758,8 @@ def user_got_level(message):
 
     bot.send_message(
         message.chat.id,
-        f"✅ Рівень *{message.text}* збережено\\!\n\n"
+        f"✅ *Рівень збережено\\!*\n"
+        f"`{level_badge}`\n\n"
         f"👇 *Оберіть тренера*\n"
         f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
         f"Натисніть кнопку під карткою тренера:",
@@ -812,16 +846,17 @@ def user_picked_trainer(call):
     send_main_menu(cid, call.from_user.id, "Ми повідомимо вас!")
 
     # Попереднє повідомлення тренеру
+    level_badge = LEVEL_BADGE.get(data['level'], data['level'])
     trainer_msg = (
         f"📬 *Новий запит на заняття\\!*\n"
         f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
         f"👤 Учень: *{data['name']}*\n"
         f"📱 `{data['phone']}`\n"
-        f"♟️ Рівень: {data['level']}\n\n"
+        f"♟️ `{level_badge}`\n\n"
         f"_Очікуйте підтвердження від адміністратора\\._"
     )
     try:
-        bot.send_message(f"@{trainer_username}", trainer_msg, parse_mode="Markdown")
+        bot.send_message(f"@{trainer_username}", trainer_msg, parse_mode="MarkdownV2")
         logger.info(f"📨 Попередження тренеру @{trainer_username} надіслано")
     except Exception as e:
         logger.warning(f"⚠️ Не вдалося надіслати тренеру @{trainer_username}: {e}")
@@ -833,7 +868,7 @@ def user_picked_trainer(call):
         f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
         f"👤 *{data['name']}* \\({user_tg}\\)\n"
         f"📱 `{data['phone']}`\n"
-        f"♟️ Рівень: {data['level']}\n\n"
+        f"♟️ `{level_badge}`\n\n"
         f"👨\u200d🏫 Тренер: *{trainer_name}* \\(@{trainer_username}\\)\n"
         f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
         f"Підтвердіть або відхиліть запис:"
@@ -877,6 +912,7 @@ def admin_confirm_enroll(call):
     user_name        = data.get("name", "учня")
     user_phone       = data.get("phone", "—")
     user_level       = data.get("level", "—")
+    user_level_badge = LEVEL_BADGE.get(user_level, user_level)
 
     bot.answer_callback_query(call.id, "✅ Запис підтверджено!")
 
@@ -915,7 +951,7 @@ def admin_confirm_enroll(call):
                 f"До вас записався новий учень:\n"
                 f"👤 *{user_name}*\n"
                 f"📱 `{user_phone}`\n"
-                f"♟️ Рівень: {user_level}\n\n"
+                f"♟️ `{user_level_badge}`\n\n"
                 f"_Зв'яжіться з учнем для організації занять\\!_",
                 parse_mode="MarkdownV2"
             )
