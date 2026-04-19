@@ -95,7 +95,7 @@ class TursoClient:
         if resp.status_code != 200:
             raise Exception(f"HTTP {resp.status_code}: {resp.text[:300]}")
 
-        data    = resp.json()
+        data    = resp.json() 
         results = data.get("results", [])
         if not results:
             return QueryResult([])
