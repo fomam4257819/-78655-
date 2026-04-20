@@ -301,7 +301,7 @@ def main_menu_markup(user_id: int) -> types.ReplyKeyboardMarkup:
 def admin_menu_markup() -> types.ReplyKeyboardMarkup:
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add("➕ Додати тренера", "➖ Видалити тренера")
-    m.add("📋 Список тренерів", "📊 Статистика")
+    m.add("📋 Список тренерів")
     m.add(BTN_BACK)
     return m
 
