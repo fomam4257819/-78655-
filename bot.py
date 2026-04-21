@@ -480,70 +480,49 @@ def add_trainer_start(message):
     if message.from_user.id != ADMIN_ID:
         return
     trainer_form[message.chat.id] = {}
-    user_states[message.chat.id]  = "add_trainer_forward"
+    user_states[message.chat.id]  = "add_trainer_pick_user"
+
+    # request_users — кнопка відкриває вибір контакту з Telegram
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(
+        types.KeyboardButton(
+            "👤 Вказати тренера",
+            request_users=types.KeyboardButtonRequestUsers(
+                request_id=1,
+                user_is_bot=False,
+            )
+        )
+    )
+    markup.add(BTN_CANCEL)
     bot.send_message(
         message.chat.id,
         "➕ *Додавання тренера*\n"
         "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
         "🔵 Крок 1 з 3  ●○○\n\n"
-        "📨 *Перешліть* боту будь-яке повідомлення від тренера\n\n"
-        "Як це зробити:\n"
-        "1\\. Відкрийте чат з тренером у Telegram\n"
-        "2\\. Натисніть і утримуйте будь-яке його повідомлення\n"
-        "3\\. Оберіть *«Переслати»* → оберіть цього бота\n\n"
-        "📌 _Бот автоматично отримає Telegram ID та @username тренера_",
+        "Натисніть кнопку *«👤 Вказати тренера»*\n"
+        "та оберіть потрібний контакт зі списку\\.\n\n"
+        "_Бот автоматично отримає Telegram ID та @username_",
         parse_mode="MarkdownV2",
-        reply_markup=cancel_only_markup()
+        reply_markup=markup
     )
 
 
 @bot.message_handler(
-    func=lambda m: user_states.get(m.chat.id) == "add_trainer_forward"
+    content_types=["users_shared"],
+    func=lambda m: user_states.get(m.chat.id) == "add_trainer_pick_user"
 )
-def add_trainer_forward(message):
+def add_trainer_user_shared(message):
     cid = message.chat.id
 
-    # Крок 1: перевіряємо чи це взагалі пересланe повідомлення
-    # forward_date є у будь-якого forwarded повідомлення
-    is_forwarded = bool(message.forward_date)
-
-    if not is_forwarded:
-        # Звичайне повідомлення — нагадуємо як переслати
-        bot.send_message(
-            cid,
-            "📨 Це звичайне повідомлення, а потрібне *пересланe*\\.\n\n"
-            "Як переслати:\n"
-            "1\\. Відкрийте чат з тренером\n"
-            "2\\. Затримайте будь-яке його повідомлення\n"
-            "3\\. Натисніть *«Переслати»* → оберіть цього бота\n\n"
-            "_Спробуйте ще раз або натисніть_ ❌ _Скасувати_",
-            parse_mode="MarkdownV2",
-            reply_markup=cancel_only_markup()
-        )
-        return  # стан не змінюємо — чекаємо далі
-
-    # Крок 2: повідомлення пересланe — дивимось на forward_from
-    fwd = message.forward_from  # None якщо тренер закрив конфіденційність
-
-    if not fwd:
-        # Пересланe, але акаунт закритий — переключаємо на ручний ввід
-        bot.send_message(
-            cid,
-            "⚠️ *Повідомлення переслано, але ID прихований*\n"
-            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
-            "Тренер закрив доступ у налаштуваннях Telegram "
-            "\\(_Конфіденційність → Переслані повідомлення_\\)\\.\n\n"
-            "Попросіть тренера відкрити доступ і переслати знову, "
-            "або введіть його @username вручну нижче "
-            "\\(сповіщення підуть по @username, без ID\\):",
-            parse_mode="MarkdownV2",
-            reply_markup=cancel_only_markup()
-        )
-        user_states[cid] = "add_trainer_username_manual"
+    # users_shared містить список обраних користувачів
+    shared = message.users_shared
+    if not shared or not shared.users:
+        bot.send_message(cid, "❌ Не вдалося отримати дані. Спробуйте ще раз.")
         return
 
-    tg_id   = fwd.id
-    uname   = fwd.username or ""
+    user = shared.users[0]
+    tg_id   = user.user_id
+    uname   = user.username or ""
     display = f"@{uname}" if uname else f"ID {tg_id}"
     db_username = uname if uname else str(tg_id)
 
@@ -558,7 +537,7 @@ def add_trainer_forward(message):
         f"➕ *Додавання тренера*\n"
         f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
         f"🔵 Крок 2 з 3  ●●○\n\n"
-        f"✅ Дані отримано\\!\n"
+        f"✅ Тренер обраний:\n"
         f"👤 {display}\n"
         f"🆔 `{tg_id}`\n\n"
         f"✍️ Введіть повне ім'я тренера\n\n"
@@ -568,18 +547,18 @@ def add_trainer_forward(message):
     )
 
 
-# Запасний варіант — ручне введення @username якщо forward заблоковано
+# Запасний варіант — якщо users_shared не підтримується старим клієнтом
 @bot.message_handler(func=lambda m: user_states.get(m.chat.id) == "add_trainer_username_manual")
 def add_trainer_username_manual(message):
     cid      = message.chat.id
-    username = message.text.strip()
+    username = message.text.strip() if message.text else ""
     if not username.startswith("@"):
-        bot.send_message(cid, "❌ Username має починатися з @\\. Спробуйте ще раз:", parse_mode="MarkdownV2")
+        bot.send_message(cid, "❌ Username має починатися з @. Спробуйте ще раз:")
         return
     uname   = username[1:]
     display = f"@{uname}"
     trainer_form[cid].update({
-        "telegram_id":      None,  # невідомий — повідомлення будуть по @username
+        "telegram_id":      None,
         "username":         uname,
         "display_username": display,
     })
@@ -590,7 +569,7 @@ def add_trainer_username_manual(message):
         f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
         f"🔵 Крок 2 з 3  ●●○\n\n"
         f"✅ Username збережено: *{display}*\n"
-        f"⚠️ _ID не отримано — сповіщення будуть по @username_\n\n"
+        f"⚠️ _ID не отримано — сповіщення підуть по @username_\n\n"
         f"✍️ Введіть повне ім'я тренера\n\n"
         f"📌 _Приклад:_ `Іван Петренко`",
         parse_mode="MarkdownV2",
