@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "ТВІЙ_ТОКЕН_БОТА")
 ADMIN_ID    = int(os.getenv("ADMIN_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://78655.onrender.com")
-TURSO_URL   = os.getenv("TURSO_URL",   "libsql://yhbvgt656-yhbvgt656.aws-eu-west-1.turso.io")
-TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4NDM0OTA5MTksImdpZCI6ImZmYTlmM2NjLWZlY2ItNGU1Zi1hNzA5LTZjNTJlNzFjY2NhYSIsImlhdCI6MTc3NjQ0NDUxOSwicmlkIjoiOTBkMDM1ZmQtZGY5Ni00MGE3LTg1YmYtMDM4ZmQ1MDAyMDkyIn0.own5cPQDw4Jfm_P-Ql8EdC_OYfRCI-pkXgCS_9vJkh6Y0SxxWAURIsbzDD8e0P5R-eTdc4uCkVV1nwhbRjiVAA")
+TURSO_URL   = os.getenv("TURSO_URL",   "libsql://base-yhbvgt656.aws-eu-west-1.turso.io")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4NzM2NDEyMDEsImlhdCI6MTc3NzIxODgwMSwiaWQiOiIwMTlkY2E3ZC1kNzAxLTcxNjktOGJiYS03MDNkNDVkYmIxYTMiLCJyaWQiOiIwNjRkODk3YS00ZDM3LTQ5MDEtODg5YS1iYjVkNmI5OWZjZTkifQ.Ecd93rj_9Usy0I7-ROEkQyS6AgXoWNXVixsEBhg0sfBEBntPVIPiVoecS5SXRDkZzfV3s8X9teIanxGoKZ6IBw")
 MAX_DB_RETRIES = 3
 DB_RETRY_DELAY = 2
 
